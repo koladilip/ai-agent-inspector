@@ -182,3 +182,26 @@ def test_queue_manager_initialize_twice():
     manager.initialize(_export)
     manager.initialize(_export)
     manager.shutdown()
+
+
+def test_put_blocking_success():
+    """put(block=True) succeeds when queue has space."""
+    exported = []
+
+    def _export(batch):
+        exported.append(list(batch))
+
+    q = EventQueue(maxsize=5, exporter=_export)
+    result = q.put({"id": 1, "type": "run_start"}, block=True, timeout=0.5)
+    assert result is True
+    assert q._events_queued == 1
+
+
+def test_put_blocking_timeout_returns_false():
+    """put(block=True, timeout=...) returns False when queue stays full."""
+    q = EventQueue(maxsize=1, exporter=lambda _batch: None)
+    q.put({"id": 1}, block=False)
+    # Queue is full; blocking put with short timeout should fail
+    result = q.put({"id": 2}, block=True, timeout=0.01)
+    assert result is False
+    assert q._events_dropped >= 1

@@ -353,3 +353,41 @@ def test_bad_steps_decode_returns_null_data():
     assert response.status_code == 200
     body = response.json()
     assert body["steps"][0]["data"] is None
+
+
+def test_export_run_returns_run_and_timeline():
+    """GET /v1/runs/{run_id}/export returns run metadata and decoded timeline."""
+    client = make_client()
+    response = client.get("/v1/runs/run-1/export")
+    assert response.status_code == 200
+    body = response.json()
+    assert "run" in body
+    assert body["run"]["id"] == "run-1"
+    assert "timeline" in body
+    assert len(body["timeline"]) >= 1
+    assert body["timeline"][0]["data"] == {"decoded": True}
+
+
+def test_export_run_not_found_returns_404():
+    """GET /v1/runs/{run_id}/export returns 404 when run does not exist."""
+    client = make_client()
+    response = client.get("/v1/runs/missing/export")
+    assert response.status_code == 404
+
+
+def test_runs_started_after_filter():
+    """List runs accepts started_after query param (ms since epoch)."""
+    client = make_client()
+    response = client.get("/v1/runs?started_after=1000")
+    assert response.status_code == 200
+    body = response.json()
+    assert "runs" in body
+
+
+def test_runs_started_before_filter():
+    """List runs accepts started_before query param (ms since epoch)."""
+    client = make_client()
+    response = client.get("/v1/runs?started_before=9999999999999")
+    assert response.status_code == 200
+    body = response.json()
+    assert "runs" in body

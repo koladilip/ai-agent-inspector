@@ -600,6 +600,40 @@ class TestRunOperations:
         runs = db.list_runs(order_by="bad_field")
         assert len(runs) >= 1
 
+    def test_list_runs_with_started_after(self, db):
+        """List runs with started_after filters to runs started after timestamp."""
+        base_ts = int(time.time() * 1000)
+        for i in range(3):
+            db.insert_run(
+                {
+                    "id": f"run-ts-{i}",
+                    "name": f"Run {i}",
+                    "status": "completed",
+                    "started_at": base_ts + i * 1000,
+                }
+            )
+        # Only runs with started_at > base_ts + 500 (so run-ts-1 and run-ts-2)
+        runs = db.list_runs(limit=100, started_after=base_ts + 500)
+        assert len(runs) == 2
+        assert all(r["started_at"] > base_ts + 500 for r in runs)
+
+    def test_list_runs_with_started_before(self, db):
+        """List runs with started_before filters to runs started before timestamp."""
+        base_ts = int(time.time() * 1000)
+        for i in range(3):
+            db.insert_run(
+                {
+                    "id": f"run-ts-b-{i}",
+                    "name": f"Run {i}",
+                    "status": "completed",
+                    "started_at": base_ts + i * 1000,
+                }
+            )
+        # Only runs with started_at < base_ts + 1500 (run-ts-b-0 and run-ts-b-1)
+        runs = db.list_runs(limit=100, started_before=base_ts + 1500)
+        assert len(runs) == 2
+        assert all(r["started_at"] < base_ts + 1500 for r in runs)
+
 
 class TestStepOperations:
     """Test database operations on steps."""

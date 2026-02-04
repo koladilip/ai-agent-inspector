@@ -345,7 +345,7 @@ sequenceDiagram
     App->>Trace: trace.llm(...) / trace.tool(...)
     Trace->>Ctx: emit event
     Ctx->>Queue: put(event) [non-blocking]
-    Note over Queue: Event queued; agent continues
+    Note over Queue: Event queued, agent continues
 
     loop Background worker
         Worker->>Queue: get batch (size or timeout)
