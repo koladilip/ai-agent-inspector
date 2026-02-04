@@ -1,0 +1,32 @@
+# Release Please: creates/updates a Release PR from conventional commits.
+# When you merge that PR, this action creates the tag (e.g. v1.0.0) and GitHub Release.
+#
+# CONNECTED TO publish.yml: the tag push from this workflow triggers publish.yml
+# (on: push: tags: v*), which publishes to PyPI. So: merge Release PR → tag created
+# → publish.yml runs → package on PyPI.
+#
+# Use conventional commits: feat:, fix:, BREAKING CHANGE: etc.
+# See https://www.conventionalcommits.org/
+
+name: release-please
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: googleapis/release-please-action@v4
+        id: release
+        with:
+          config-file: release-please-config.json
+          # GITHUB_TOKEN is provided by default; use a PAT secret if you need
+          # CI to run on the release PR (e.g. token: ${{ secrets.RELEASE_PLEASE_TOKEN }})

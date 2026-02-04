@@ -132,6 +132,8 @@ branch = true
 omit = [
     "tests/*",
     "*/cli.py",
+    # Optional OTLP exporter: requires [otel]; tested separately or in CI with extra
+    "agent_inspector/exporters/otel.py",
 ]
 
 [tool.coverage.report]

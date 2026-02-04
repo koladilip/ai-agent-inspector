@@ -1,6 +1,9 @@
 # Publish ai-agent-inspector to PyPI when a version tag is pushed.
 # Uses PyPI Trusted Publishing (OIDC) — no API token stored in GitHub.
 #
+# TRIGGERED BY release-please.yml: when you merge the Release PR, Release Please
+# creates the tag (e.g. v1.0.0); that tag push runs this workflow.
+#
 # One-time setup:
 #
 # A. GitHub: create a "pypi" environment (recommended for publish gating)
@@ -15,8 +18,9 @@
 #    - Workflow name: publish.yml
 #    - Environment: pypi   (must match the job environment below)
 #
-# To release: bump version in pyproject.toml, commit, then:
-#   git tag v1.0.0 && git push origin v1.0.0
+# To release: use Release Please (conventional commits on main). It opens a
+# Release PR; when you merge it, this workflow runs on the new tag and publishes to PyPI.
+# Or manually: git tag v1.0.0 && git push origin v1.0.0
 
 name: Publish to PyPI
 

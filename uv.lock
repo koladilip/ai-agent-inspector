@@ -7,7 +7,7 @@ resolution-markers = [
 ]
 
 [[package]]
-name = "agent-inspector"
+name = "ai-agent-inspector"
 version = "1.0.0"
 source = { editable = "." }
 dependencies = [
@@ -58,7 +58,7 @@ otel = [
 
 [package.metadata]
 requires-dist = [
-    { name = "agent-inspector", extras = ["langchain", "dev"], marker = "extra == 'all'" },
+    { name = "ai-agent-inspector", extras = ["langchain", "dev"], marker = "extra == 'all'" },
     { name = "black", marker = "extra == 'dev'", specifier = ">=23.0.0" },
     { name = "cryptography", specifier = ">=41.0.0" },
     { name = "fastapi", specifier = ">=0.104.0" },
