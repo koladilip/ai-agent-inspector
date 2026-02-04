@@ -907,7 +907,7 @@ Releases are automated with [Release Please](https://github.com/googleapis/relea
 
 When you merge the Release PR, a tag is created and the [publish workflow](.github/workflows/publish.yml) publishes to PyPI (OIDC).
 
-**First release:** Release Please only creates Release PRs for commits *since* the latest release. If you have no release yet, create the initial tag so it has a baseline: `git tag v1.0.0 && git push origin v1.0.0`. After that, new `feat:`/`fix:` commits will get Release PRs.
+**First release:** Release Please only creates Release PRs for commits *since* the latest release. If you have no release yet, create the initial tag so it has a baseline: `git tag v1.0.0 && git push origin v1.0.0`. After that, new `feat:`/`fix:` commits (not `docs:` or `chore:`) will get Release PRs.
 
 ---
 
