@@ -1034,7 +1034,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 <div align="center">
 
-**Made with ❤️ by the Agent Inspector Team**
+**Made with ❤️ by Dilip Kola**
 
-[⭐ Star us on GitHub](https://github.com/koladilip/ai-agent-inspector)
+[⭐ Star on GitHub](https://github.com/koladilip/ai-agent-inspector)
 </div>
