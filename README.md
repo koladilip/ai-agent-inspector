@@ -897,6 +897,16 @@ flake8 agent_inspector/
 mypy agent_inspector/
 ```
 
+### Releasing
+
+Releases are automated with [Release Please](https://github.com/googleapis/release-please). Use **conventional commits** so Release Please can open and update a Release PR:
+
+- **feat:** – new feature (bumps minor version)
+- **fix:** – bug fix (bumps patch version)
+- **feat!:** or **BREAKING CHANGE:** – breaking change (bumps major version)
+
+When you merge the Release PR, a tag is created and the [publish workflow](.github/workflows/publish.yml) publishes to PyPI (OIDC).
+
 ---
 
 ## Contributing
@@ -1022,9 +1032,6 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 - 📖 [Documentation](https://github.com/koladilip/ai-agent-inspector#readme)
 - 🐛 [Issue Tracker](https://github.com/koladilip/ai-agent-inspector/issues)
-- 💬 [Discord](https://discord.gg/YctCnvvshC)
-- 📧 Email: team@agentinspector.dev
-
 ---
 
 ## Acknowledgments
