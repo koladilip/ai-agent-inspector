@@ -737,7 +737,6 @@ We welcome contributions! Here's how to get started:
 - Add tests for new features
 - Update documentation
 - Keep changes minimal and focused
-- Align with the [Core Principles](openspec/principles/core.md)
 
 ---
 
@@ -828,7 +827,6 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## Acknowledgments
 
-Built with [OpenSpec](https://openspec.dev) - The lightweight spec-driven framework for AI infrastructure development.
 
 ---
 
