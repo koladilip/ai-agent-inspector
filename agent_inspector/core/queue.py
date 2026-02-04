@@ -175,7 +175,13 @@ class EventQueue:
                 logger.exception(f"Error in worker thread: {e}")
                 # Continue processing despite errors
 
-        # Flush any remaining events before exiting
+        # Drain queue and flush all remaining events before exiting
+        try:
+            while True:
+                event = self._queue.get_nowait()
+                batch.append(event)
+        except queue.Empty:
+            pass
         if batch:
             self._flush_batch(batch)
 

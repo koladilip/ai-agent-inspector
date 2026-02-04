@@ -4,8 +4,19 @@ Trace SDK for Agent Inspector.
 Provides the main interface for tracing agent executions with context
 managers and event emission methods. All operations are non-blocking
 and thread-safe.
+
+Extensibility:
+- Pass a custom Exporter to Trace(exporter=...) or use CompositeExporter
+  for multiple backends.
+- Pass a custom Sampler to Trace(sampler=...) to control which runs are traced.
+- Use TraceContext.emit(event) or Trace.emit(event) for custom event types.
+- Use set_trace(trace) / set_trace(None) for testing or process-wide override.
+
+Note: Under queue backpressure, events (including run_end) may be dropped;
+the worker never blocks the calling thread.
 """
 
+import hashlib
 import logging
 import threading
 import time
@@ -33,10 +44,28 @@ from .events import (
     create_run_start,
     create_tool_call,
 )
-from .interfaces import Exporter
+from .interfaces import Exporter, Sampler
 from .queue import EventQueue, EventQueueManager
 
 logger = logging.getLogger(__name__)
+
+
+def _default_should_sample(run_id: str, config: TraceConfig) -> bool:
+    """
+    Default deterministic sampling based on run_id and config.sample_rate.
+
+    Used when no custom Sampler is provided. Deterministic so the same run_id
+    always gets the same decision.
+    """
+    if config.only_on_error:
+        return True
+    if config.sample_rate >= 1.0:
+        return True
+    if config.sample_rate <= 0.0:
+        return False
+    hash_val = int(hashlib.md5(run_id.encode()).hexdigest(), 16)
+    threshold = int(config.sample_rate * (2**32))
+    return (hash_val % (2**32)) < threshold
 
 
 class TraceContext:
@@ -64,7 +93,6 @@ class TraceContext:
             run_id: Unique identifier for this run.
             run_name: Human-readable name for the run.
             config: TraceConfig instance.
-            pipeline: Processing pipeline for events.
             queue: Event queue for async processing.
             agent_type: Type of agent framework.
             user_id: User identifier.
@@ -106,15 +134,15 @@ class TraceContext:
         self._queue_event(event)
         logger.debug(f"Started trace run: {self.run_id} ({self.run_name})")
 
-    def _queue_event(self, event: BaseEvent):
+    def _queue_event(self, event: BaseEvent) -> None:
         """
-                Queue an event for async processing.
+        Queue an event for async processing.
 
-                Events are queued raw and processed in the background worker
+        Events are queued raw and processed in the background worker
         to minimize impact on agent execution performance.
 
-                Args:
-                    event: Event to queue.
+        Args:
+            event: Event to queue.
         """
         event_dict = event.to_dict()
         try:
@@ -376,6 +404,31 @@ class TraceContext:
         self._active = False
         return event
 
+    def emit(self, event: BaseEvent) -> Optional[BaseEvent]:
+        """
+        Emit an arbitrary event on this context.
+
+        Use this for custom event types (e.g., subclass BaseEvent with
+        type=EventType.CUSTOM) or to push pre-built events.
+
+        Args:
+            event: Any BaseEvent (or subclass). run_id and parent_event_id
+                are not overwritten; set them before calling if needed.
+
+        Returns:
+            The same event after queuing, or None if context is inactive.
+        """
+        if not self._active:
+            logger.warning("Attempted to emit event on inactive trace context")
+            return None
+        # Ensure run_id and parent linkage for consistency
+        if not event.run_id:
+            event.run_id = self.run_id
+        if event.parent_event_id is None and self.parent_event_id:
+            event.parent_event_id = self.parent_event_id
+        self._queue_event(event)
+        return event
+
     def complete(self, success: bool = True):
         """
         Mark the trace run as complete without emitting a final answer event.
@@ -408,18 +461,28 @@ class Trace:
     agent executions. All operations are non-blocking and thread-safe.
     """
 
-    def __init__(self, config: Optional[TraceConfig] = None, exporter: Optional[Exporter] = None):
+    def __init__(
+        self,
+        config: Optional[TraceConfig] = None,
+        exporter: Optional[Exporter] = None,
+        sampler: Optional[Sampler] = None,
+    ):
         """
         Initialize the Trace SDK.
 
         Args:
             config: TraceConfig instance. If None, uses global config.
-            exporter: Optional exporter override.
+            exporter: Optional exporter override. Use CompositeExporter
+                for multiple backends.
+            sampler: Optional sampler to decide which runs to trace.
+                If None, uses deterministic hash-based sampling from config.
         """
         self.config = config or get_config()
         self._exporter = exporter or StorageExporter(self.config)
+        self._sampler = sampler
         self._queue_manager = EventQueueManager(self.config)
         self._initialized = False
+        self._init_lock = threading.Lock()
 
         # Thread-local storage for active trace contexts
         self._local = threading.local()
@@ -429,9 +492,7 @@ class Trace:
         if self._initialized:
             return
 
-        self._lock = threading.Lock()
-        self._lock.acquire()
-        try:
+        with self._init_lock:
             if not self._initialized:
                 # Initialize event queue with exporter
                 def export_batch(batch: List[Dict[str, Any]]):
@@ -442,8 +503,6 @@ class Trace:
 
                 self._initialized = True
                 logger.info("Trace SDK initialized")
-        finally:
-            self._lock.release()
 
     def _export_batch(self, batch: List[Dict[str, Any]]):
         """
@@ -457,36 +516,20 @@ class Trace:
         except Exception as e:
             logger.exception(f"Failed to export batch: {e}")
 
-    def _check_sampling(self, run_id: str) -> bool:
+    def _check_sampling(self, run_id: str, run_name: str) -> bool:
         """
-        Check if this run should be sampled based on configuration.
+        Check if this run should be sampled based on sampler or config.
 
         Args:
             run_id: Unique identifier for the run.
+            run_name: Human-readable run name.
 
         Returns:
             True if the run should be sampled/traced, False otherwise.
         """
-        # If only_on_error is set, we always trace initially
-        # We'll delete the run later if no error occurs
-        if self.config.only_on_error:
-            return True
-
-        # Check sample rate
-        if self.config.sample_rate >= 1.0:
-            return True
-
-        if self.config.sample_rate <= 0.0:
-            return False
-
-        # Deterministic sampling based on run_id
-        # Use a simple hash-based approach
-        import hashlib
-
-        hash_val = int(hashlib.md5(run_id.encode()).hexdigest(), 16)
-        sample_threshold = int(self.config.sample_rate * (2**32))
-
-        return (hash_val % (2**32)) < sample_threshold
+        if self._sampler is not None:
+            return self._sampler.should_sample(run_id, run_name, self.config)
+        return _default_should_sample(run_id, self.config)
 
     @contextmanager
     def run(
@@ -520,7 +563,7 @@ class Trace:
         run_id = str(uuid.uuid4())
 
         # Check sampling
-        if not self._check_sampling(run_id):
+        if not self._check_sampling(run_id, run_name):
             logger.debug(f"Run {run_id} not sampled, skipping trace")
             # Yield a no-op context
             yield None
@@ -534,6 +577,8 @@ class Trace:
 
         # Get queue
         queue = self._queue_manager.get_queue()
+        if queue is None:
+            raise RuntimeError("Event queue is not initialized")
 
         # Create trace context
         context = TraceContext(
@@ -768,6 +813,25 @@ class Trace:
         logger.warning("No active trace context for final answer")
         return None
 
+    def emit(self, event: BaseEvent) -> Optional[BaseEvent]:
+        """
+        Emit an arbitrary event on the active trace context.
+
+        Use for custom event types (e.g., EventType.CUSTOM or custom subclasses).
+
+        Args:
+            event: Any BaseEvent (or subclass). run_id/parent_event_id are
+                set from active context if not already set.
+
+        Returns:
+            The event after queuing, or None if no active context.
+        """
+        context = self.get_active_context()
+        if context:
+            return context.emit(event)
+        logger.warning("No active trace context for emit")
+        return None
+
     def shutdown(self, timeout_ms: int = 5000):
         """
         Shutdown the trace system and flush remaining events.
@@ -781,7 +845,7 @@ class Trace:
         logger.info("Trace SDK shut down")
 
 
-# Global trace instance
+# Global trace instance (set_trace allows injection for tests)
 _global_trace: Optional[Trace] = None
 _global_trace_lock = threading.Lock()
 
@@ -790,10 +854,8 @@ def get_trace() -> Trace:
     """
     Get the global trace instance.
 
-    Creates a default trace instance if none exists.
-
-    Returns:
-        The global Trace instance.
+    Creates a default trace instance if none exists. Use set_trace() to
+    inject a custom instance (e.g., in tests) or set_trace(None) to reset.
     """
     global _global_trace
     if _global_trace is None:
@@ -801,6 +863,19 @@ def get_trace() -> Trace:
             if _global_trace is None:
                 _global_trace = Trace()
     return _global_trace
+
+
+def set_trace(trace_instance: Optional[Trace]) -> None:
+    """
+    Set the global trace instance (for testing or process-wide override).
+
+    Args:
+        trace_instance: Trace instance to use globally, or None to clear
+            so the next get_trace() will create a new default instance.
+    """
+    global _global_trace
+    with _global_trace_lock:
+        _global_trace = trace_instance
 
 
 # Convenience functions that use the global trace instance

@@ -32,8 +32,11 @@ from .core.config import (
     get_config,
     set_config,
 )
+from .core.exporters import CompositeExporter
+from .core.interfaces import Exporter, Sampler
 from .core.trace import (
     Trace,
+    TraceContext,
     error,
     final,
     get_trace,
@@ -41,6 +44,7 @@ from .core.trace import (
     memory_read,
     memory_write,
     run,
+    set_trace,
     tool,
 )
 
@@ -79,6 +83,7 @@ __all__ = [
     "__version__",
     # Core tracing
     "Trace",
+    "TraceContext",
     "trace",  # Convenience alias for get_trace()
     "run",
     "llm",
@@ -88,11 +93,16 @@ __all__ = [
     "error",
     "final",
     "get_trace",
+    "set_trace",
     # Configuration
     "TraceConfig",
     "Profile",
     "get_config",
     "set_config",
+    # Extensibility
+    "Exporter",
+    "Sampler",
+    "CompositeExporter",
     # Event types
     "EventType",
     "EventStatus",

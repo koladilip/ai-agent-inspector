@@ -16,6 +16,7 @@ import pytest
 
 from agent_inspector.core.config import Profile, TraceConfig
 from agent_inspector.core.events import (
+    BaseEvent,
     EventStatus,
     EventType,
     create_error,
@@ -26,7 +27,12 @@ from agent_inspector.core.events import (
     create_run_start,
     create_tool_call,
 )
-from agent_inspector.core.trace import Trace, TraceContext, get_trace
+from agent_inspector.core.trace import (
+    Trace,
+    TraceContext,
+    get_trace,
+    set_trace,
+)
 
 
 @pytest.fixture
@@ -490,7 +496,7 @@ def test_export_batch_failure_is_non_fatal(test_config):
         def export_batch(self, _batch):
             raise RuntimeError("boom")
 
-        def close(self):
+        def shutdown(self):
             return None
 
     trace = Trace(config=test_config, exporter=BoomExporter())
@@ -765,3 +771,112 @@ class TestGlobalTrace:
                     error_type="E", error_message="err"
                 ) is not None
                 assert trace_module.final(answer="a") is not None
+
+    def test_set_trace_reset_and_recreate(self, test_config, mock_exporter):
+        """set_trace(None) clears global; next get_trace() creates new instance."""
+        with patch("agent_inspector.core.trace.StorageExporter", return_value=mock_exporter):
+            set_trace(None)
+            t1 = get_trace()
+            t2 = get_trace()
+            assert t1 is t2
+            set_trace(None)
+            t3 = get_trace()
+            assert t3 is not t1
+        set_trace(None)
+
+    def test_set_trace_injection(self, test_config, mock_exporter):
+        """set_trace(custom) makes get_trace() return that instance."""
+        custom = Trace(config=test_config, exporter=mock_exporter)
+        set_trace(custom)
+        try:
+            assert get_trace() is custom
+        finally:
+            set_trace(None)
+
+
+class TestPluggableSampler:
+    """Test custom Sampler extension."""
+
+    def test_custom_sampler_all_trace(self, test_config, mock_exporter):
+        """Sampler returning True traces every run."""
+        class AllSampler:
+            def should_sample(self, run_id, run_name, config):
+                return True
+
+        trace = Trace(
+            config=test_config,
+            exporter=mock_exporter,
+            sampler=AllSampler(),
+        )
+        with trace.run("sampled") as ctx:
+            assert ctx is not None
+            ctx.llm(model="m", prompt="p", response="r")
+        # Worker flushes asynchronously; shutdown() blocks until it finishes
+        trace.shutdown()
+        assert mock_exporter.export_batch.called, (
+            "export_batch was never called; worker may not have flushed in time"
+        )
+
+    def test_custom_sampler_never_trace(self, test_config, mock_exporter):
+        """Sampler returning False yields None context."""
+        class NeverSampler:
+            def should_sample(self, run_id, run_name, config):
+                return False
+
+        trace = Trace(
+            config=test_config,
+            exporter=mock_exporter,
+            sampler=NeverSampler(),
+        )
+        with trace.run("not_sampled") as ctx:
+            assert ctx is None
+        mock_exporter.export_batch.assert_not_called()
+
+
+class TestEmitCustomEvent:
+    """Test TraceContext.emit() and Trace.emit() for custom events."""
+
+    def test_context_emit_custom_event(self, test_config, mock_exporter):
+        """TraceContext.emit() queues a custom BaseEvent."""
+        trace = Trace(config=test_config, exporter=mock_exporter)
+        with trace.run("emit_run") as ctx:
+            custom = BaseEvent(
+                run_id=ctx.run_id,
+                type=EventType.CUSTOM,
+                name="custom_step",
+                metadata={"key": "value"},
+            )
+            out = ctx.emit(custom)
+        assert out is custom
+        # Shutdown blocks until worker flushes all queued events
+        trace.shutdown()
+        all_events = []
+        for call in mock_exporter.export_batch.call_args_list:
+            batch = call[0][0] if call[0] else []
+            all_events.extend(batch)
+        types = [e.get("type") for e in all_events]
+        assert EventType.CUSTOM.value in types, (
+            f"Expected 'custom' in event types, got: {types}. "
+            f"Calls: {len(mock_exporter.export_batch.call_args_list)}"
+        )
+
+    def test_emit_inactive_returns_none(self, test_config, mock_exporter):
+        """Emitting on inactive context returns None."""
+        trace = Trace(config=test_config, exporter=mock_exporter)
+        with trace.run("r") as ctx:
+            pass
+        custom = BaseEvent(run_id="x", type=EventType.CUSTOM, name="n")
+        assert ctx.emit(custom) is None
+
+    def test_trace_emit_convenience(self, test_config, mock_exporter):
+        """Trace.emit() delegates to active context."""
+        trace = Trace(config=test_config, exporter=mock_exporter)
+        with trace.run("r") as ctx:
+            custom = BaseEvent(
+                run_id=ctx.run_id,
+                type=EventType.CUSTOM,
+                name="n",
+            )
+            out = trace.emit(custom)
+        assert out is custom
+        assert trace.emit(custom) is None  # no active context

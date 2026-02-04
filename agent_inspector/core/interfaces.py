@@ -1,10 +1,16 @@
 """
 Public interfaces for Agent Inspector SDK components.
+
+All protocols in this module define extension points for the tracing library.
+Implement these interfaces to plug in custom exporters, samplers, or storage.
 """
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Protocol
+from typing import Any, Dict, List, Optional, Protocol, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .config import TraceConfig
 
 
 class Exporter(Protocol):
@@ -20,6 +26,34 @@ class Exporter(Protocol):
 
     def shutdown(self) -> None:
         """Shutdown exporter and flush resources."""
+        ...  # pragma: no cover
+
+
+class Sampler(Protocol):
+    """
+    Protocol for run sampling decisions.
+
+    Implement this to control which runs are traced (e.g., rate-based,
+    user-based, or deterministic). Pass an implementation to Trace(sampler=...).
+    """
+
+    def should_sample(
+        self,
+        run_id: str,
+        run_name: str,
+        config: "TraceConfig",
+    ) -> bool:
+        """
+        Return True if this run should be traced, False to skip.
+
+        Args:
+            run_id: Unique run identifier.
+            run_name: Human-readable run name.
+            config: Current trace configuration.
+
+        Returns:
+            True to trace this run, False to skip (no-op context is yielded).
+        """
         ...  # pragma: no cover
 
 

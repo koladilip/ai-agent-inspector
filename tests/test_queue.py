@@ -2,6 +2,7 @@
 Queue worker tests.
 """
 
+import queue
 import time
 from unittest.mock import MagicMock
 
@@ -146,7 +147,10 @@ def test_worker_loop_flushes_remaining_batch(monkeypatch):
     q = EventQueue(maxsize=2, exporter=_export)
     calls = {"count": 0}
 
-    def _get(timeout=None):
+    def _get(block=True, timeout=None):
+        # get_nowait() calls get(block=False); main loop calls get(timeout=0.1)
+        if not block:
+            raise queue.Empty
         calls["count"] += 1
         if calls["count"] == 1:
             return {"id": 1}

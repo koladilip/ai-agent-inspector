@@ -25,6 +25,8 @@ class EventType(str, Enum):
     MEMORY_WRITE = "memory_write"
     ERROR = "error"
     FINAL_ANSWER = "final_answer"
+    CUSTOM = "custom"
+    """Use for custom events via TraceContext.emit() or Trace.emit()."""
 
 
 class EventStatus(str, Enum):
@@ -42,6 +44,8 @@ class BaseEvent:
     Base class for all events.
 
     All events include common fields for identification and tracking.
+    For custom event types, subclass BaseEvent, set type=EventType.CUSTOM,
+    and use metadata/input/output for payload; then emit via TraceContext.emit().
     """
 
     event_id: str = field(default_factory=lambda: str(uuid.uuid4()))

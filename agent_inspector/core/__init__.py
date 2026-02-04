@@ -5,6 +5,7 @@ Provides configuration, event model, queue system, and trace SDK.
 """
 
 from .config import Profile, TraceConfig, get_config, set_config
+from .exporters import CompositeExporter
 from .events import (
     BaseEvent,
     ErrorEvent,
@@ -26,8 +27,9 @@ from .events import (
     create_run_start,
     create_tool_call,
 )
+from .interfaces import Exporter, ReadStore, Sampler
 from .queue import EventQueue, EventQueueManager
-from .trace import Trace, get_trace, run
+from .trace import Trace, get_trace, run, set_trace
 
 __all__ = [
     # Configuration
@@ -58,8 +60,15 @@ __all__ = [
     # Queue
     "EventQueue",
     "EventQueueManager",
+    # Interfaces
+    "Exporter",
+    "ReadStore",
+    "Sampler",
+    # Exporters
+    "CompositeExporter",
     # Trace
     "Trace",
     "get_trace",
     "run",
+    "set_trace",
 ]
