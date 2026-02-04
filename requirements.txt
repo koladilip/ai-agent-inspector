@@ -1,0 +1,21 @@
+# Agent Inspector Dependencies
+# Framework-agnostic observability for AI agents
+
+# Core dependencies
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+cryptography>=41.0.0
+jinja2>=3.1.0
+python-dotenv>=1.0.0
+
+# Optional dependencies
+langchain>=0.1.0  # Required for LangChain adapter
+
+# Development dependencies (optional)
+# pytest>=7.4.0
+# pytest-asyncio>=0.21.0
+# pytest-cov>=4.1.0
+# httpx>=0.25.0
+# black>=23.0.0
+# flake8>=6.0.0
+# mypy>=1.7.0

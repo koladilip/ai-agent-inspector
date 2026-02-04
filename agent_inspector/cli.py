@@ -1,0 +1,439 @@
+"""
+Command-line interface for Agent Inspector.
+
+Provides commands for:
+- Starting the API server
+- Viewing database statistics
+- Pruning old trace data
+- Managing configuration
+"""
+
+import argparse
+import logging
+import sys
+from typing import Optional
+
+from .api.main import run_server
+from .core.config import Profile, TraceConfig, get_config, set_config
+
+
+def setup_logging(log_level: str = "INFO", log_file: Optional[str] = None):
+    """
+    Setup logging configuration.
+
+    Args:
+        log_level: Logging level (DEBUG, INFO, WARNING, ERROR).
+        log_file: Optional path to log file. If None, logs to stdout.
+    """
+    logging.basicConfig(
+        level=getattr(logging, log_level.upper()),
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        filename=log_file,
+    )
+
+
+def cmd_server(args):
+    """Start the API server."""
+    print("🚀 Starting Agent Inspector API server...")
+
+    # Setup logging
+    setup_logging(log_level=args.log_level, log_file=args.log_file)
+
+    # Get or create configuration
+    config = get_config()
+
+    # Override with CLI arguments
+    if args.host:
+        config.api_host = args.host
+    if args.port:
+        config.api_port = args.port
+
+    # Set the config
+    set_config(config)
+
+    # Start server
+    print(f"📍 Server running on http://{config.api_host}:{config.api_port}")
+    print(f"🌐 UI available at http://{config.api_host}:{config.api_port}/ui")
+    print(f"📚 API docs at http://{config.api_host}:{config.api_port}/docs")
+    print("\nPress Ctrl+C to stop the server\n")
+
+    run_server(host=config.api_host, port=config.api_port)
+
+
+def cmd_stats(args):
+    """View database statistics."""
+    from .storage.database import Database
+
+    print("📊 Agent Inspector Statistics\n")
+
+    # Setup logging
+    setup_logging(log_level="WARNING")
+
+    # Get configuration
+    config = get_config()
+
+    # Initialize database
+    db = Database(config)
+    db.initialize()
+
+    # Get stats
+    stats = db.get_stats()
+
+    if not stats:
+        print("❌ No statistics available")
+        return 1
+
+    # Display stats
+    print(f"Total Runs: {stats.get('total_runs', 0)}")
+    print(f"  - Running: {stats.get('running_runs', 0)}")
+    print(f"  - Completed: {stats.get('completed_runs', 0)}")
+    print(f"  - Failed: {stats.get('failed_runs', 0)}")
+    print(f"\nTotal Steps (Events): {stats.get('total_steps', 0)}")
+    print(f"Database Size: {stats.get('db_size_bytes', 0):,} bytes")
+    print(f"\nRecent Activity (24h): {stats.get('recent_runs_24h', 0)} runs")
+
+    return 0
+
+
+def cmd_prune(args):
+    """Prune old trace data."""
+    from .storage.database import Database
+
+    print("🧹 Pruning old trace data...")
+
+    # Setup logging
+    setup_logging(log_level=args.log_level or "INFO")
+
+    # Get configuration
+    config = get_config()
+
+    # Override with CLI arguments
+    if args.retention_days is not None:
+        config.retention_days = args.retention_days
+
+    # Initialize database
+    db = Database(config)
+    db.initialize()
+
+    # Prune old runs
+    deleted_count = db.prune_old_runs(retention_days=config.retention_days)
+
+    if deleted_count > 0:
+        print(f"✅ Pruned {deleted_count} old runs")
+
+        # Optionally vacuum to reclaim space
+        if args.vacuum:
+            print("💾 Running VACUUM to reclaim disk space...")
+            if db.vacuum():
+                print("✅ VACUUM completed")
+            else:
+                print("⚠️  VACUUM failed")
+    else:
+        print("ℹ️  No runs to prune")
+
+    return 0
+
+
+def cmd_vacuum(args):
+    """Run VACUUM to reclaim disk space."""
+    from .storage.database import Database
+
+    print("💾 Running VACUUM to reclaim disk space...")
+
+    # Setup logging
+    setup_logging(log_level="WARNING")
+
+    # Get configuration
+    config = get_config()
+
+    # Initialize database
+    db = Database(config)
+    db.initialize()
+
+    # Run vacuum
+    if db.vacuum():
+        print("✅ VACUUM completed successfully")
+        return 0
+    else:
+        print("❌ VACUUM failed")
+        return 1
+
+
+def cmd_backup(args):
+    """Create a database backup."""
+    from .storage.database import Database
+
+    print(f"💾 Creating backup to {args.backup_path}...")
+
+    # Setup logging
+    setup_logging(log_level="INFO")
+
+    # Get configuration
+    config = get_config()
+
+    # Initialize database
+    db = Database(config)
+    db.initialize()
+
+    # Create backup
+    if db.backup(args.backup_path):
+        print(f"✅ Backup created at {args.backup_path}")
+        return 0
+    else:
+        print("❌ Backup failed")
+        return 1
+
+
+def cmd_config(args):
+    """View or set configuration."""
+    config = get_config()
+
+    if args.show:
+        # Show current configuration
+        print("⚙️  Current Configuration\n")
+        print(config.to_json())
+    elif args.profile:
+        # Set profile
+        try:
+            profile = Profile(args.profile.lower())
+
+            if profile == Profile.PRODUCTION:
+                new_config = TraceConfig.production()
+            elif profile == Profile.DEVELOPMENT:
+                new_config = TraceConfig.development()
+            elif profile == Profile.DEBUG:
+                new_config = TraceConfig.debug()
+            else:
+                print(f"❌ Unknown profile: {args.profile}")
+                return 1
+
+            set_config(new_config)
+            print(f"✅ Configuration set to {profile.value} profile")
+            return 0
+        except ValueError as e:
+            print(f"❌ Invalid profile: {e}")
+            return 1
+    else:
+        # Show brief configuration
+        print("⚙️  Agent Inspector Configuration\n")
+        print(f"Sample Rate: {config.sample_rate * 100:.1f}%")
+        print(f"Only on Error: {config.only_on_error}")
+        print(f"Encryption: {'Enabled' if config.encryption_enabled else 'Disabled'}")
+        print(f"Compression: {'Enabled' if config.compression_enabled else 'Disabled'}")
+        print(f"API Host: {config.api_host}:{config.api_port}")
+        print(f"Database: {config.db_path}")
+
+    return 0
+
+
+def cmd_init(args):
+    """Initialize Agent Inspector."""
+    print("🔧 Initializing Agent Inspector...")
+
+    # Create default configuration
+    config = TraceConfig()
+
+    # Override with arguments
+    if args.profile:
+        try:
+            profile = Profile(args.profile.lower())
+            if profile == Profile.PRODUCTION:
+                config = TraceConfig.production()
+            elif profile == Profile.DEVELOPMENT:
+                config = TraceConfig.development()
+            elif profile == Profile.DEBUG:
+                config = TraceConfig.debug()
+        except ValueError as e:
+            print(f"❌ Invalid profile: {e}")
+            return 1
+
+    # Initialize database
+    from .storage.database import Database
+
+    db = Database(config)
+    db.initialize()
+
+    print("✅ Agent Inspector initialized!")
+    print(f"\n📍 Database: {config.db_path}")
+    print(f"📊 Sample Rate: {config.sample_rate * 100:.1f}%")
+    print(f"🔒 Encryption: {'Enabled' if config.encryption_enabled else 'Disabled'}")
+
+    print("\n💡 Next steps:")
+    print("   - Start API server: agent-inspector server")
+    print("   - Run examples: python examples/basic_tracing.py")
+    print("   - View UI: http://localhost:8000/ui")
+
+    return 0
+
+
+def main():
+    """Main entry point for CLI."""
+    parser = argparse.ArgumentParser(
+        prog="agent-inspector",
+        description="Framework-agnostic observability for AI agents",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Start API server
+  agent-inspector server
+
+  # Start server on custom port
+  agent-inspector server --port 8080
+
+  # View statistics
+  agent-inspector stats
+
+  # Prune data older than 30 days
+  agent-inspector prune --retention-days 30
+
+  # Set development profile
+  agent-inspector config --profile development
+
+  # Initialize with debug profile
+  agent-inspector init --profile debug
+        """,
+    )
+
+    parser.add_argument(
+        "--version",
+        action="version",
+        version="%(prog)s 1.0.0",
+    )
+
+    subparsers = parser.add_subparsers(dest="command", help="Available commands")
+
+    # Server command
+    server_parser = subparsers.add_parser(
+        "server",
+        help="Start the API server",
+        description="Start the FastAPI server for serving trace data and UI",
+    )
+    server_parser.add_argument(
+        "--host",
+        type=str,
+        help="Host to bind to (default: 127.0.0.1)",
+    )
+    server_parser.add_argument(
+        "--port",
+        type=int,
+        help="Port to bind to (default: 8000)",
+    )
+    server_parser.add_argument(
+        "--log-level",
+        type=str,
+        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
+        default="INFO",
+        help="Log level (default: INFO)",
+    )
+    server_parser.add_argument(
+        "--log-file",
+        type=str,
+        help="Path to log file (default: stdout)",
+    )
+
+    # Stats command
+    _stats_parser = subparsers.add_parser(
+        "stats",
+        help="View database statistics",
+        description="Display statistics about stored trace data",
+    )
+
+    # Prune command
+    prune_parser = subparsers.add_parser(
+        "prune",
+        help="Prune old trace data",
+        description="Delete trace data older than the retention period",
+    )
+    prune_parser.add_argument(
+        "--retention-days",
+        type=int,
+        help="Retention period in days (default: from config)",
+    )
+    prune_parser.add_argument(
+        "--vacuum",
+        action="store_true",
+        help="Run VACUUM after pruning to reclaim disk space",
+    )
+    prune_parser.add_argument(
+        "--log-level",
+        type=str,
+        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
+        help="Log level",
+    )
+
+    # Vacuum command
+    _vacuum_parser = subparsers.add_parser(
+        "vacuum",
+        help="Run VACUUM to reclaim disk space",
+        description="Run SQLite VACUUM to reclaim disk space",
+    )
+
+    # Backup command
+    backup_parser = subparsers.add_parser(
+        "backup",
+        help="Create database backup",
+        description="Create a backup of the SQLite database",
+    )
+    backup_parser.add_argument(
+        "backup_path",
+        type=str,
+        help="Path where backup should be saved",
+    )
+
+    # Config command
+    config_parser = subparsers.add_parser(
+        "config",
+        help="View or set configuration",
+        description="View current configuration or set a profile preset",
+    )
+    config_parser.add_argument(
+        "--show",
+        action="store_true",
+        help="Show full configuration",
+    )
+    config_parser.add_argument(
+        "--profile",
+        type=str,
+        choices=["production", "development", "debug"],
+        help="Set configuration profile (production, development, debug)",
+    )
+
+    # Init command
+    init_parser = subparsers.add_parser(
+        "init",
+        help="Initialize Agent Inspector",
+        description="Initialize Agent Inspector with default configuration",
+    )
+    init_parser.add_argument(
+        "--profile",
+        type=str,
+        choices=["production", "development", "debug"],
+        help="Configuration profile to use",
+    )
+
+    # Parse arguments
+    args = parser.parse_args()
+
+    # Execute command
+    if args.command == "server":
+        return cmd_server(args)
+    elif args.command == "stats":
+        return cmd_stats(args)
+    elif args.command == "prune":
+        return cmd_prune(args)
+    elif args.command == "vacuum":
+        return cmd_vacuum(args)
+    elif args.command == "backup":
+        return cmd_backup(args)
+    elif args.command == "config":
+        return cmd_config(args)
+    elif args.command == "init":
+        return cmd_init(args)
+    else:
+        # No command specified, show help
+        parser.print_help()
+        return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main() or 0)

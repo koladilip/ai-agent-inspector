@@ -1,0 +1,141 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agent-inspector"
+version = "1.0.0"
+description = "Framework-agnostic observability for AI agents"
+readme = "README.md"
+requires-python = ">=3.9"
+license = {text = "MIT"}
+authors = [
+    {name = "Agent Inspector Team", email = "team@agentinspector.dev"}
+]
+keywords = [
+    "observability",
+    "tracing",
+    "ai",
+    "agents",
+    "langchain",
+    "llm",
+    "monitoring",
+    "debugging",
+    "instrumentation",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+dependencies = [
+    "fastapi>=0.104.0",
+    "uvicorn[standard]>=0.24.0",
+    "cryptography>=41.0.0",
+    "jinja2>=3.1.0",
+    "python-dotenv>=1.0.0",
+]
+
+[project.optional-dependencies]
+langchain = [
+    "langchain>=0.1.0",
+]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-asyncio>=0.21.0",
+    "pytest-cov>=4.1.0",
+    "httpx>=0.25.0",
+    "black>=23.0.0",
+    "flake8>=6.0.0",
+    "mypy>=1.7.0",
+]
+all = [
+    "agent-inspector[langchain,dev]",
+]
+
+[project.urls]
+Homepage = "https://github.com/Fission-AI/AgentInspector"
+Documentation = "https://github.com/Fission-AI/AgentInspector#readme"
+Repository = "https://github.com/Fission-AI/AgentInspector"
+"Bug Tracker" = "https://github.com/Fission-AI/AgentInspector/issues"
+
+[project.scripts]
+agent-inspector = "agent_inspector.cli:main"
+
+[tool.setuptools]
+packages = ["agent_inspector"]
+
+[tool.setuptools.package-data]
+agent_inspector = ["ui/templates/*.html", "ui/static/*"]
+
+[tool.black]
+line-length = 100
+target-version = ["py39", "py310", "py311", "py312"]
+include = '\\.pyi?$'
+exclude = """
+/(
+    \\.git
+  | \\.venv
+  | \\.eggs
+  | \\.tox
+  | build
+  | dist
+  | docs
+)/
+"""
+
+[tool.mypy]
+python_version = "3.9"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "langchain.*"
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = "test_*.py"
+python_classes = "Test*"
+python_functions = "test_*"
+addopts = [
+    "-v",
+    "--strict-markers",
+    "--cov=agent_inspector",
+    "--cov-report=html",
+    "--cov-report=term-missing",
+]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "integration: marks tests as integration tests",
+    "unit: marks tests as unit tests",
+]
+
+[tool.coverage.run]
+source = ["agent_inspector"]
+branch = true
+omit = [
+    "tests/*",
+    "*/cli.py",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+    "@abstractmethod",
+]
