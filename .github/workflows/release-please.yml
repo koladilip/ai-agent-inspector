@@ -28,5 +28,5 @@ jobs:
         id: release
         with:
           config-file: release-please-config.json
-          # GITHUB_TOKEN is provided by default; use a PAT secret if you need
-          # CI to run on the release PR (e.g. token: ${{ secrets.RELEASE_PLEASE_TOKEN }})
+          # If no PR is created (e.g. org restricts GITHUB_TOKEN), add a PAT as
+          # RELEASE_PLEASE_TOKEN and set token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
