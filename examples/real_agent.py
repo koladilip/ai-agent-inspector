@@ -1,18 +1,26 @@
 """
 Real agent example for Agent Inspector.
 
-Uses an OpenAI-compatible API (e.g., GLM) to:
-- decide a tool to call
-- execute a local Python tool
- - produce a final answer using the tool result
+Uses an OpenAI-compatible API (OpenAI, Azure, GLM, etc.) to run a real
+tool-using agent: the model chooses a tool, we execute it locally, then
+the model produces a final answer. All runs are traced.
+
+Real-world patterns demonstrated:
+- Tool selection + execution + answer (single question)
+- Tool failure → error event → fallback tool → answer
+- Retries (e.g. invalid JSON from LLM)
+- Redaction (sensitive fields in tool args)
+- Memory read/write (user preferences)
+- Multi-tool sequence and parallel runs
 
 Required environment variables:
-- OPENAI_BASE_URL (e.g., https://open.bigmodel.cn/api/paas/v4)
+- OPENAI_BASE_URL (e.g. https://api.openai.com/v1 or your provider)
 - OPENAI_API_KEY
 - OPENAI_MODEL
 
 Optional:
 - OPENAI_TEMPERATURE (default: 0.2)
+- OPENAI_TIMEOUT (default: 60)
 """
 
 from __future__ import annotations
@@ -101,20 +109,20 @@ def openai_chat(
 
 
 def tool_search_docs(query: str) -> Dict[str, Any]:
-    # Simulate a docs lookup
+    """Simulate a knowledge-base / docs search (e.g. internal wiki or RAG)."""
     time.sleep(0.2)
     return {
         "query": query,
         "results": [
-            {"title": "Agent Inspector Overview", "score": 0.92},
-            {"title": "Tracing API Reference", "score": 0.88},
-            {"title": "Storage and Retention", "score": 0.73},
+            {"title": "Agent Inspector Overview", "score": 0.92, "snippet": "Framework-agnostic observability for AI agents."},
+            {"title": "Tracing API Reference", "score": 0.88, "snippet": "trace.run(), trace.llm(), trace.tool(), trace.final()."},
+            {"title": "Storage and Retention", "score": 0.73, "snippet": "SQLite with WAL; configurable retention_days."},
         ],
     }
 
 
 def tool_calculate(expression: str) -> Dict[str, Any]:
-    # Safe arithmetic evaluator using ast
+    """Safe arithmetic evaluator (e.g. for spreadsheet-style or calculator tools)."""
     import ast
 
     allowed_nodes = (
@@ -176,9 +184,9 @@ def tool_calculate(expression: str) -> Dict[str, Any]:
 
 
 def tool_weather(city: str) -> Dict[str, Any]:
-    # Simulated weather tool (replace with real API if desired)
+    """Simulated weather lookup (in production, call Open-Meteo or similar)."""
     time.sleep(0.1)
-    return {"city": city, "forecast": "sunny", "temp_c": 22}
+    return {"city": city, "forecast": "sunny", "temp_c": 22, "humidity": 65}
 
 
 TOOLS = {
@@ -344,21 +352,26 @@ def _suite_scenarios(
         print(f"Scenario 1 failed: {e}")
     counter += 1
 
-    # Scenario 2: Tool failure + recovery
+    # Scenario 2: Tool failure → error event → fallback tool → answer (real failure)
     with trace.run("scenario_tool_failure", agent_type="custom") as ctx:
         if ctx:
-            question = "Please calculate 2 + 2, but include invalid characters."
+            question = "What is 2 + 2 with an invalid expression?"
             decision = {"tool": "calculate", "args": {"expression": "2 + 2 + BAD"}}
-            ctx.tool(tool_name="calculate", tool_args=decision["args"], tool_result="pending")
             try:
-                tool_calculate(**decision["args"])
+                result = tool_calculate(**decision["args"])
+                ctx.tool(tool_name="calculate", tool_args=decision["args"], tool_result=result)
             except Exception as e:
-                ctx.error(error_type=type(e).__name__, error_message=str(e))
-                # Recovery path: switch tool and answer
-                alt_result = tool_search_docs("calculator fallback")
+                ctx.tool(
+                    tool_name="calculate",
+                    tool_args=decision["args"],
+                    tool_result={"error": str(e)},
+                )
+                ctx.error(error_type=type(e).__name__, error_message=str(e), critical=False)
+                # Fallback: use search and let model answer
+                alt_result = tool_search_docs("2 + 2 arithmetic")
                 ctx.tool(
                     tool_name="search_docs",
-                    tool_args={"query": "calculator fallback"},
+                    tool_args={"query": "2 + 2 arithmetic"},
                     tool_result=alt_result,
                 )
                 answer, answer_messages, _raw_answer = answer_with_tool(
@@ -378,43 +391,38 @@ def _suite_scenarios(
                 )
                 ctx.final(answer=answer)
 
-    # Scenario 3: LLM retry (invalid JSON once)
-    with trace.run("scenario_llm_retry", agent_type="custom") as ctx:
+    # Scenario 3: Normal weather flow (shows tool selection + execution + answer)
+    with trace.run("scenario_weather_flow", agent_type="custom") as ctx:
         if ctx:
             question = "What's the weather in Boston?"
-            try:
-                # Force a retry by simulating a bad response on first attempt
-                raise RuntimeError("Tool selector returned invalid JSON: {bad json")
-            except Exception as e:
-                ctx.error(error_type=type(e).__name__, error_message=str(e))
-                decision, messages, selector_response, _raw_selector = choose_tool_with_retry(
-                    question, base_url, api_key, model, temperature, timeout_s
-                )
-                ctx.llm(
-                    model=model,
-                    prompt=json.dumps(messages, ensure_ascii=False),
-                    response=selector_response,
-                )
-                tool_name = decision.get("tool")
-                tool_args = decision.get("args", {})
-                tool_result = TOOLS[tool_name](**tool_args)
-                ctx.tool(tool_name=tool_name, tool_args=tool_args, tool_result=tool_result)
-                answer, answer_messages, _raw_answer = answer_with_tool(
-                    question,
-                    tool_name,
-                    tool_result,
-                    base_url,
-                    api_key,
-                    model,
-                    temperature,
-                    timeout_s,
-                )
-                ctx.llm(
-                    model=model,
-                    prompt=json.dumps(answer_messages, ensure_ascii=False),
-                    response=answer,
-                )
-                ctx.final(answer=answer)
+            decision, messages, selector_response, _raw_selector = choose_tool_with_retry(
+                question, base_url, api_key, model, temperature, timeout_s
+            )
+            ctx.llm(
+                model=model,
+                prompt=json.dumps(messages, ensure_ascii=False),
+                response=selector_response,
+            )
+            tool_name = decision.get("tool")
+            tool_args = decision.get("args", {})
+            tool_result = TOOLS[tool_name](**tool_args)
+            ctx.tool(tool_name=tool_name, tool_args=tool_args, tool_result=tool_result)
+            answer, answer_messages, _raw_answer = answer_with_tool(
+                question,
+                tool_name,
+                tool_result,
+                base_url,
+                api_key,
+                model,
+                temperature,
+                timeout_s,
+            )
+            ctx.llm(
+                model=model,
+                prompt=json.dumps(answer_messages, ensure_ascii=False),
+                response=answer,
+            )
+            ctx.final(answer=answer)
 
     # Scenario 4: Long response / larger payload
     try:
@@ -432,7 +440,7 @@ def _suite_scenarios(
         print(f"Scenario 4 failed: {e}")
     counter += 1
 
-    # Scenario 5: Redaction (sensitive fields in tool args)
+    # Scenario 5: Redaction – sensitive keys in tool args are redacted in storage
     with trace.run("scenario_redaction", agent_type="custom") as ctx:
         if ctx:
             tool_args = {"query": "api_key=sk-test-123 password=secret"}
@@ -455,7 +463,7 @@ def _suite_scenarios(
             )
             ctx.final(answer=answer)
 
-    # Scenario 6: Memory read/write events
+    # Scenario 6: Memory – user preferences (e.g. default city) read/write
     with trace.run("scenario_memory_ops", agent_type="custom") as ctx:
         if ctx:
             ctx.memory_write(
@@ -472,7 +480,7 @@ def _suite_scenarios(
             answer = "Stored and retrieved user preference."
             ctx.final(answer=answer)
 
-    # Scenario 7: Nested tool sequence
+    # Scenario 7: Multi-tool sequence – search then calculate in one run
     with trace.run("scenario_nested_tools", agent_type="custom") as ctx:
         if ctx:
             first = tool_search_docs("Agent Inspector retention policy")
@@ -490,7 +498,7 @@ def _suite_scenarios(
             answer = "Combined docs lookup with a quick calculation."
             ctx.final(answer=answer)
 
-    # Scenario 8: Parallel runs
+    # Scenario 8: Parallel runs – concurrent requests (e.g. multiple users)
     def _parallel_run(idx: int):
         try:
             _run_single_question(

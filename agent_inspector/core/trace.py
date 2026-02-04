@@ -22,6 +22,7 @@ import threading
 import time
 import uuid
 from contextlib import contextmanager
+from contextvars import ContextVar
 from typing import Any, Dict, List, Optional
 
 from ..storage.exporter import StorageExporter
@@ -134,7 +135,7 @@ class TraceContext:
         self._queue_event(event)
         logger.debug(f"Started trace run: {self.run_id} ({self.run_name})")
 
-    def _queue_event(self, event: BaseEvent) -> None:
+    def _queue_event(self, event: BaseEvent, critical: bool = False) -> None:
         """
         Queue an event for async processing.
 
@@ -143,13 +144,20 @@ class TraceContext:
 
         Args:
             event: Event to queue.
+            critical: If True and config.block_on_run_end is set, block (up to
+                run_end_block_timeout_ms) so the event is not dropped under backpressure.
         """
         event_dict = event.to_dict()
         try:
-            # Queue raw event dict - processing happens in background worker
-            # This minimizes overhead in the hot path (agent execution)
-            self.queue.put_nowait(event_dict)
-            self._events.append(event_dict)
+            if critical and getattr(self.config, "block_on_run_end", False):
+                timeout_s = getattr(
+                    self.config, "run_end_block_timeout_ms", 5000
+                ) / 1000.0
+                queued = self.queue.put(event_dict, block=True, timeout=timeout_s)
+            else:
+                queued = self.queue.put_nowait(event_dict)
+            if queued:
+                self._events.append(event_dict)
         except Exception as e:
             logger.error(f"Failed to queue event {event.event_id}: {e}")
             # Don't block execution, just log the error
@@ -484,8 +492,10 @@ class Trace:
         self._initialized = False
         self._init_lock = threading.Lock()
 
-        # Thread-local storage for active trace contexts
-        self._local = threading.local()
+        # Context stack for active trace contexts (works in both sync and async)
+        self._context_stack: ContextVar[Optional[List["TraceContext"]]] = ContextVar(
+            "agent_inspector_trace_context_stack", default=None
+        )
 
     def _ensure_initialized(self):
         """Ensure the trace system is initialized (lazy initialization)."""
@@ -591,10 +601,9 @@ class Trace:
             session_id=session_id,
         )
 
-        # Store in thread-local for nested access
-        if not hasattr(self._local, "contexts"):
-            self._local.contexts = []
-        self._local.contexts.append(context)
+        # Push context onto stack (contextvars: correct for both sync and async)
+        stack = self._context_stack.get() or []
+        self._context_stack.set(stack + [context])
 
         try:
             # Yield context to user code
@@ -609,9 +618,12 @@ class Trace:
             )
             raise
         finally:
-            # Clean up
-            if self._local.contexts:
-                self._local.contexts.pop()
+            # Pop context from stack
+            stack = self._context_stack.get() or []
+            if len(stack) > 1:
+                self._context_stack.set(stack[:-1])
+            else:
+                self._context_stack.set(None)
 
             # Mark context as inactive
             context._active = False
@@ -640,7 +652,7 @@ class Trace:
                 delete_run=delete_run,
             )
             run_end.set_completed()
-            context._queue_event(run_end)
+            context._queue_event(run_end, critical=True)
 
             logger.debug(
                 f"Trace run {run_id} completed in {duration_ms}ms "
@@ -654,9 +666,8 @@ class Trace:
         Returns:
             The active TraceContext or None if no context is active.
         """
-        if hasattr(self._local, "contexts") and self._local.contexts:
-            return self._local.contexts[-1]
-        return None
+        stack = self._context_stack.get() or []
+        return stack[-1] if stack else None
 
     # Convenience methods that use active context
 

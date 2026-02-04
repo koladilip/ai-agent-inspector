@@ -1,0 +1,52 @@
+# Publish ai-agent-inspector to PyPI when a version tag is pushed.
+# Uses PyPI Trusted Publishing (OIDC) — no API token stored in GitHub.
+#
+# One-time setup:
+#
+# A. GitHub: create a "pypi" environment (recommended for publish gating)
+#    Repo → Settings → Environments → New environment → name: pypi
+#    Optionally: add "Required reviewers" or restrict "Deployment branches"
+#    so only certain people can trigger publishes.
+#
+# B. PyPI: add trusted publisher
+#    Project on pypi.org → Publishing → Add a new trusted publisher
+#    - Owner: koladilip
+#    - Repository name: ai-agent-inspector (match PyPI project name)
+#    - Workflow name: publish.yml
+#    - Environment: pypi   (must match the job environment below)
+#
+# To release: bump version in pyproject.toml, commit, then:
+#   git tag v1.0.0 && git push origin v1.0.0
+
+name: Publish to PyPI
+
+on:
+  push:
+    tags:
+      - 'v*'   # e.g. v1.0.0, v1.0.1
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: pypi   # Uses repo environment; restricts who can publish if configured
+    permissions:
+      contents: read
+      id-token: write   # Required for OIDC / Trusted Publishing
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install build tools
+        run: pip install build
+
+      - name: Build package
+        run: python -m build
+
+      - name: Publish to PyPI (Trusted Publishing / OIDC)
+        uses: pypa/gh-action-pypi-publish@release/v1
+        # No TWINE_USERNAME / TWINE_PASSWORD; PyPI trusts the OIDC token from GitHub.

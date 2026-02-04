@@ -15,6 +15,13 @@ from fastapi import FastAPI, Header, HTTPException, Query, status
 from fastapi.responses import RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 
+from importlib.metadata import PackageNotFoundError, version
+
+try:
+    _version = version("ai-agent-inspector")
+except PackageNotFoundError:
+    _version = "0.0.0.dev"
+
 from ..core.config import TraceConfig, get_config
 from ..core.interfaces import ReadStore
 from ..processing.pipeline import ProcessingPipeline
@@ -53,7 +60,7 @@ class APIServer:
         self.app = FastAPI(
             title="Agent Inspector API",
             description="Framework-agnostic observability for AI agents",
-            version="1.0.0",
+            version=_version,
             docs_url="/docs",
             redoc_url="/redoc",
         )
@@ -160,6 +167,14 @@ class APIServer:
             user_id: Optional[str] = Query(None, description="Filter by user ID"),
             session_id: Optional[str] = Query(None, description="Filter by session ID"),
             search: Optional[str] = Query(None, description="Search in run name"),
+            started_after: Optional[int] = Query(
+                None,
+                description="Only runs started after this timestamp (ms since epoch)",
+            ),
+            started_before: Optional[int] = Query(
+                None,
+                description="Only runs started before this timestamp (ms since epoch)",
+            ),
             order_by: str = Query("started_at", description="Field to order by"),
             order_dir: str = Query(
                 "DESC", pattern="^(ASC|DESC)$", description="Order direction"
@@ -176,6 +191,8 @@ class APIServer:
                 user_id: Filter by user ID.
                 session_id: Filter by session ID.
                 search: Search in run name.
+                started_after: Only runs started after this time (ms since epoch).
+                started_before: Only runs started before this time (ms since epoch).
                 order_by: Field to order by.
                 order_dir: Order direction (ASC or DESC).
                 x_api_key: API key for authentication.
@@ -193,6 +210,8 @@ class APIServer:
                     user_id=user_id,
                     session_id=session_id,
                     search=search,
+                    started_after=started_after,
+                    started_before=started_before,
                     order_by=order_by,
                     order_dir=order_dir,
                 )
@@ -382,6 +401,55 @@ class APIServer:
                 raise HTTPException(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                     detail="Failed to retrieve timeline",
+                )
+
+        @self.app.get("/v1/runs/{run_id}/export")
+        async def export_run(
+            run_id: str,
+            x_api_key: Optional[str] = Header(None),
+        ):
+            """
+            Export a run and its timeline as JSON (for backup or migration).
+
+            Returns run metadata plus timeline events with decoded event data.
+            """
+            self._check_auth(x_api_key)
+
+            try:
+                run = self._database.get_run(run_id)
+                if not run:
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail=f"Run {run_id} not found",
+                    )
+
+                timeline = self._database.get_run_timeline(
+                    run_id=run_id,
+                    include_data=True,
+                )
+                for event in timeline:
+                    if event.get("data"):
+                        try:
+                            event["data"] = self._pipeline.reverse(event["data"])
+                        except Exception as e:
+                            logger.warning(
+                                "Failed to decode event %s: %s",
+                                event.get("id"),
+                                e,
+                            )
+                            event["data"] = None
+
+                return {
+                    "run": dict(run),
+                    "timeline": timeline,
+                }
+            except HTTPException:
+                raise
+            except Exception as e:
+                logger.error(f"Failed to export run {run_id}: {e}")
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Failed to export run",
                 )
 
         @self.app.get("/v1/runs/{run_id}/steps/{step_id}/data")

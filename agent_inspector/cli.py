@@ -5,14 +5,17 @@ Provides commands for:
 - Starting the API server
 - Viewing database statistics
 - Pruning old trace data
+- Exporting runs to JSON
 - Managing configuration
 """
 
 import argparse
+import json
 import logging
 import sys
 from typing import Optional
 
+from . import __version__
 from .api.main import run_server
 from .core.config import Profile, TraceConfig, get_config, set_config
 
@@ -184,6 +187,62 @@ def cmd_backup(args):
         return 1
 
 
+def cmd_export(args):
+    """Export run(s) to JSON file or stdout."""
+    from .processing.pipeline import ProcessingPipeline
+    from .storage.database import Database
+
+    if not getattr(args, "all_runs", False) and not getattr(args, "run_id", None):
+        print("Error: provide run_id or use --all", file=sys.stderr)
+        return 1
+
+    setup_logging(log_level="INFO")
+    config = get_config()
+    db = Database(config)
+    db.initialize()
+    pipeline = ProcessingPipeline(config)
+
+    def export_one(run_id: str) -> Optional[dict]:
+        run = db.get_run(run_id)
+        if not run:
+            print(f"Run {run_id} not found", file=sys.stderr)
+            return None
+        timeline = db.get_run_timeline(run_id=run_id, include_data=True)
+        for event in timeline:
+            if event.get("data"):
+                try:
+                    event["data"] = pipeline.reverse(event["data"])
+                except Exception:
+                    event["data"] = None
+        return {"run": dict(run), "timeline": timeline}
+
+    if getattr(args, "all_runs", False):
+        runs = db.list_runs(limit=args.limit or 1000, offset=0)
+        payload = []
+        for r in runs:
+            rid = r.get("id")
+            if rid:
+                one = export_one(rid)
+                if one:
+                    payload.append(one)
+        data = {"runs": payload, "total": len(payload)}
+    else:
+        one = export_one(args.run_id)
+        if not one:
+            return 1
+        data = one
+
+    out = args.output
+    json_str = json.dumps(data, indent=2, default=str)
+    if out:
+        with open(out, "w") as f:
+            f.write(json_str)
+        print(f"✅ Exported to {out}")
+    else:
+        print(json_str)
+    return 0
+
+
 def cmd_config(args):
     """View or set configuration."""
     config = get_config()
@@ -297,7 +356,7 @@ Examples:
     parser.add_argument(
         "--version",
         action="version",
-        version="%(prog)s 1.0.0",
+        version=f"%(prog)s {__version__}",
     )
 
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
@@ -380,6 +439,38 @@ Examples:
         help="Path where backup should be saved",
     )
 
+    # Export command
+    export_parser = subparsers.add_parser(
+        "export",
+        help="Export run(s) to JSON",
+        description="Export a run or all runs to JSON (run metadata + timeline with decoded event data)",
+    )
+    export_parser.add_argument(
+        "run_id",
+        nargs="?",
+        type=str,
+        help="Run ID to export (omit if using --all)",
+    )
+    export_parser.add_argument(
+        "--all",
+        dest="all_runs",
+        action="store_true",
+        help="Export all runs",
+    )
+    export_parser.add_argument(
+        "--limit",
+        type=int,
+        default=1000,
+        help="Max runs to export when using --all (default: 1000)",
+    )
+    export_parser.add_argument(
+        "--output",
+        "-o",
+        type=str,
+        default=None,
+        help="Output file path (default: stdout)",
+    )
+
     # Config command
     config_parser = subparsers.add_parser(
         "config",
@@ -425,6 +516,8 @@ Examples:
         return cmd_vacuum(args)
     elif args.command == "backup":
         return cmd_backup(args)
+    elif args.command == "export":
+        return cmd_export(args)
     elif args.command == "config":
         return cmd_config(args)
     elif args.command == "init":

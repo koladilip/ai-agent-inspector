@@ -118,18 +118,45 @@ class EventQueue:
         Returns:
             True if event was queued, False if dropped.
         """
+        return self.put(event, block=False)
+
+    def put(
+        self,
+        event: Dict[str, Any],
+        block: bool = False,
+        timeout: Optional[float] = None,
+    ) -> bool:
+        """
+        Add an event to the queue, optionally blocking until space is available.
+
+        Args:
+            event: Event dictionary to queue.
+            block: If True, block until the event can be queued or timeout.
+            timeout: Max seconds to block (used only when block=True).
+
+        Returns:
+            True if event was queued, False if dropped or timeout.
+        """
         try:
-            self._queue.put_nowait(event)
+            if block:
+                self._queue.put(event, block=True, timeout=timeout or 5.0)
+            else:
+                self._queue.put_nowait(event)
             with self._lock:
                 self._events_queued += 1
             return True
         except queue.Full:
             with self._lock:
                 self._events_dropped += 1
-            logger.warning(
-                f"Event queue full ({self.maxsize} events), dropping event. "
-                f"Total dropped: {self._events_dropped}"
-            )
+            if block:
+                logger.warning(
+                    "Event queue full, block timeout reached (run_end may be dropped)"
+                )
+            else:
+                logger.warning(
+                    f"Event queue full ({self.maxsize} events), dropping event. "
+                    f"Total dropped: {self._events_dropped}"
+                )
             return False
 
     def _worker_loop(self, batch_size: int, batch_timeout: float):

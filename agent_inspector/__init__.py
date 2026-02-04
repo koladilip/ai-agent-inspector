@@ -20,7 +20,13 @@ Example with LangChain:
     >>>     print(result)
 """
 
-__version__ = "1.0.0"
+from importlib.metadata import PackageNotFoundError, version
+
+try:
+    __version__ = version("ai-agent-inspector")
+except PackageNotFoundError:
+    __version__ = "0.0.0.dev"
+
 __author__ = "Agent Inspector Team"
 __license__ = "MIT"
 

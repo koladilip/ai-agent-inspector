@@ -3,7 +3,7 @@ requires = ["setuptools>=68.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "agent-inspector"
+name = "ai-agent-inspector"
 version = "1.0.0"
 description = "Framework-agnostic observability for AI agents"
 readme = "README.md"
@@ -48,6 +48,11 @@ dependencies = [
 langchain = [
     "langchain>=0.1.0",
 ]
+otel = [
+    "opentelemetry-api>=1.20.0",
+    "opentelemetry-sdk>=1.20.0",
+    "opentelemetry-exporter-otlp-proto-http>=1.20.0",
+]
 dev = [
     "pytest>=7.4.0",
     "pytest-asyncio>=0.21.0",
@@ -58,14 +63,14 @@ dev = [
     "mypy>=1.7.0",
 ]
 all = [
-    "agent-inspector[langchain,dev]",
+    "ai-agent-inspector[langchain,dev]",
 ]
 
 [project.urls]
-Homepage = "https://github.com/Fission-AI/AgentInspector"
-Documentation = "https://github.com/Fission-AI/AgentInspector#readme"
-Repository = "https://github.com/Fission-AI/AgentInspector"
-"Bug Tracker" = "https://github.com/Fission-AI/AgentInspector/issues"
+Homepage = "https://github.com/koladilip/ai-agent-inspector"
+Documentation = "https://github.com/koladilip/ai-agent-inspector#readme"
+Repository = "https://github.com/koladilip/ai-agent-inspector"
+"Bug Tracker" = "https://github.com/koladilip/ai-agent-inspector/issues"
 
 [project.scripts]
 agent-inspector = "agent_inspector.cli:main"

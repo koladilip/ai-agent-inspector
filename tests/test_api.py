@@ -39,6 +39,8 @@ class FakeStore:
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         search: Optional[str] = None,
+        started_after: Optional[int] = None,
+        started_before: Optional[int] = None,
         order_by: str = "started_at",
         order_dir: str = "DESC",
     ) -> List[Dict[str, Any]]:

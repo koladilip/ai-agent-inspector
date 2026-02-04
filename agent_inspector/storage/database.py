@@ -403,6 +403,8 @@ class Database:
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         search: Optional[str] = None,
+        started_after: Optional[int] = None,
+        started_before: Optional[int] = None,
         order_by: str = "started_at",
         order_dir: str = "DESC",
     ) -> List[Dict[str, Any]]:
@@ -416,6 +418,8 @@ class Database:
             user_id: Filter by user ID.
             session_id: Filter by session ID.
             search: Search in run name.
+            started_after: Only runs started after this timestamp (ms since epoch).
+            started_before: Only runs started before this timestamp (ms since epoch).
             order_by: Field to order by.
             order_dir: Direction (ASC or DESC).
 
@@ -445,6 +449,14 @@ class Database:
             if search:
                 query += " AND name LIKE ?"
                 params.append(f"%{search}%")
+
+            if started_after is not None:
+                query += " AND started_at > ?"
+                params.append(started_after)
+
+            if started_before is not None:
+                query += " AND started_at < ?"
+                params.append(started_before)
 
             # Add ordering
             valid_order_fields = ["started_at", "completed_at", "duration_ms", "name"]

@@ -50,6 +50,12 @@ class TraceConfig:
     batch_timeout_ms: int = 1000
     """Maximum time to wait before flushing batch (milliseconds)."""
 
+    block_on_run_end: bool = False
+    """If True, block (up to run_end_block_timeout_ms) when queueing run_end so it is not dropped under backpressure."""
+
+    run_end_block_timeout_ms: int = 5000
+    """Max time to block when queueing run_end when block_on_run_end is True (milliseconds)."""
+
     # Redaction Configuration
     redact_keys: List[str] = field(
         default_factory=lambda: [
@@ -239,6 +245,11 @@ class TraceConfig:
             "TRACE_QUEUE_SIZE": ("queue_size", int),
             "TRACE_BATCH_SIZE": ("batch_size", int),
             "TRACE_BATCH_TIMEOUT": ("batch_timeout_ms", int),
+            "TRACE_BLOCK_ON_RUN_END": (
+                "block_on_run_end",
+                lambda v: v.lower() in ("true", "1", "yes"),
+            ),
+            "TRACE_RUN_END_BLOCK_TIMEOUT": ("run_end_block_timeout_ms", int),
             "TRACE_ENCRYPTION_ENABLED": (
                 "encryption_enabled",
                 lambda v: v.lower() in ("true", "1", "yes"),

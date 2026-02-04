@@ -14,6 +14,29 @@ A lightweight, non-blocking tracing system for monitoring and debugging AI agent
 
 ---
 
+## ⚡ Get started (60 seconds)
+
+```bash
+pip install ai-agent-inspector
+# or from source: git clone <repo> && cd ai-agent-inspector && pip install -e .
+```
+
+```python
+from agent_inspector import trace
+
+with trace.run("my_first_trace"):
+    trace.llm(model="gpt-4", prompt="Hi", response="Hello!")
+    trace.final(answer="Done.")
+```
+
+```bash
+agent-inspector server   # or: python -m agent_inspector.cli server
+```
+
+Open **http://localhost:8000/ui/** to see the run. For configuration, examples, and API details, read on.
+
+---
+
 ## 📋 Table of Contents
 
 - [Overview](#overview)
@@ -57,39 +80,57 @@ Traditional tools model systems as function calls and spans. Agent Inspector mod
 
 ## Features
 
-### Core Tracing
-- ✅ Context manager API for easy instrumentation
-- ✅ Event types: LLM calls, tool calls, memory operations, errors
-- ✅ Non-blocking queue and background worker
-- ✅ Sampling support (rate-based and error-only)
-- ✅ Thread-safe for concurrent execution
+### Core tracing SDK
+- **Context manager API** – `with trace.run("run_name"):` wraps agent execution; all events are tied to that run.
+- **Event emission** – `trace.llm()`, `trace.tool()`, `trace.memory_read()`, `trace.memory_write()`, `trace.error()`, `trace.final()`; optional `trace.emit(event)` for custom event types (`EventType.CUSTOM`).
+- **Nested runs** – Multiple `trace.run()` blocks can be nested (e.g. orchestrator + specialist); parent/child is tracked via `parent_event_id`.
+- **Active context** – `trace.get_active_context()` returns the current run’s context; works in both **sync and async** (asyncio) via `contextvars`.
+- **Global trace** – `get_trace()` / `set_trace(trace)` for default instance or testing; module-level `trace` proxy.
 
-### Data Pipeline
-- 🔒 **Redaction** - Remove sensitive data by key or pattern
-- 📦 **Serialization** - Compact JSON for storage
-- 🗜️ **Compression** - 5-10x size reduction with gzip
-- 🔐 **Encryption** - Fernet symmetric encryption (optional)
+### Sampling and backpressure
+- **Sampling** – `TraceConfig.sample_rate` (0.0–1.0) and `only_on_error`; deterministic hash-based default; optional **pluggable `Sampler`** via `Trace(sampler=...)`.
+- **Non-blocking queue** – Events are queued with `put_nowait`; a background worker batches and flushes to the exporter so the hot path never blocks.
+- **Drain on shutdown** – On `shutdown()`, the worker drains the queue and flushes remaining events so nothing is dropped at exit.
+- **Critical-event backpressure** – Optional `TraceConfig.block_on_run_end` and `run_end_block_timeout_ms`; when set, `run_end` is queued with a blocking put (up to timeout) so it is not dropped when the queue is full.
+
+### Extensibility
+- **Exporter protocol** – Implement `Exporter` (initialize, export_batch, shutdown) and pass to `Trace(exporter=...)`; default is `StorageExporter` (SQLite).
+- **CompositeExporter** – Fan-out to multiple exporters: `Trace(exporter=CompositeExporter([db_exporter, http_exporter]))`.
+- **Sampler protocol** – Implement `Sampler.should_sample(run_id, run_name, config)` and pass to `Trace(sampler=...)` for custom sampling (e.g. by user, tenant).
+- **Custom events** – Use `EventType.CUSTOM` and `TraceContext.emit(event)` or `Trace.emit(event)` for custom `BaseEvent` subclasses.
+
+### Data pipeline
+- **Redaction** – Configurable `redact_keys` and `redact_patterns`; applied before serialization.
+- **Serialization** – Compact JSON for storage.
+- **Compression** – Optional gzip (configurable level) before storage.
+- **Encryption** – Optional Fernet symmetric encryption at rest (`encryption_enabled`, `encryption_key`).
 
 ### Storage
-- 💾 SQLite database with WAL mode for concurrent access
-- 📊 Efficient indexing on run_id and timestamp
-- 🧹 Automatic pruning and vacuum utilities
-- 💾 Backup and restore support
+- **SQLite** – WAL mode for concurrent access; runs and steps tables; indexes on run_id and timestamp.
+- **Pruning** – CLI `prune --retention-days N` and optional `--vacuum`; API/DB support for retention.
+- **Backup** – CLI `backup /path/to/backup.db` for full DB copy.
+- **Export to JSON** – **API** `GET /v1/runs/{run_id}/export` returns run metadata + timeline with decoded event data; **CLI** `agent-inspector export <run_id> [--output file.json]` and `agent-inspector export --all [--limit N] [--output file.json]` for backup or migration.
 
-### API & UI
-- 🌐 FastAPI REST API with OpenAPI docs
-- 🎨 Simple three-panel web interface
-- Left panel: Run list with filters and search
-- Center panel: Timeline visualization
-- Right panel: Detail view for events
-- 🌙 Dark mode support
-- ⚡ Real-time updates for running runs
+### API
+- **FastAPI** – REST API with OpenAPI docs at `/docs` and `/redoc`.
+- **Endpoints** – Health, list runs (with filters), get run, get run timeline, get run steps, get step data, **export run**, stats; optional API key auth and CORS.
+- **List runs filters** – `limit`, `offset`, `status`, `user_id`, `session_id`, `search`, **`started_after`**, **`started_before`** (timestamps in ms since epoch) for date-range queries.
 
-### Adapters
-- 🔌 **LangChain** - Automatic tracing, no code changes needed
-- 🔌 **AutoGen** - Coming soon
-- 🔌 **CrewAI** - Coming soon
-- 🔌 Custom adapters - Easy to create for any framework
+### UI
+- **Web interface** – Three-panel layout: run list (filters, search), timeline, detail view; dark mode; real-time updates for running runs; served at `/ui/`.
+
+### CLI
+- **Commands** – `init`, `server`, `stats`, `prune`, `vacuum`, `backup`, **`export`** (single run or `--all`), `config`, `--version`.
+- **Profiles** – `config --profile production|development|debug`; env `TRACE_PROFILE`.
+
+### Optional integrations
+- **LangChain** – `pip install ai-agent-inspector[langchain]`; `enable_langchain()` for automatic tracing of LLM and tool calls.
+- **OpenTelemetry OTLP** – `pip install ai-agent-inspector[otel]`; `OTLPExporter(endpoint=...)` sends events as OTLP spans to Jaeger, Tempo, Grafana, etc.
+
+### Configuration
+- **Presets** – Production, development, debug (sample rate, compression, encryption, log level).
+- **Environment variables** – All main options (sampling, queue, redaction, encryption, DB path, API, UI, logging, **block_on_run_end**, **run_end_block_timeout**) can be set via `TRACE_*` env vars.
+- **Code** – `TraceConfig` in code; `set_config(config)` for global default.
 
 ---
 
@@ -102,15 +143,17 @@ Traditional tools model systems as function calls and spans. Agent Inspector mod
 
 ### Install from PyPI
 
+The PyPI package is **`ai-agent-inspector`** (distinct from the existing `agent-inspector` project on PyPI). After install, the CLI is still `agent-inspector` and imports are `from agent_inspector import ...`.
+
 ```bash
-pip install agent-inspector
+pip install ai-agent-inspector
 ```
 
 ### Install from Source
 
 ```bash
-git clone https://github.com/Fission-AI/AgentInspector.git
-cd AgentInspector
+git clone https://github.com/koladilip/ai-agent-inspector.git
+cd ai-agent-inspector
 pip install -e .
 ```
 
@@ -118,10 +161,10 @@ pip install -e .
 
 ```bash
 # For LangChain adapter
-pip install "agent-inspector[langchain]"
+pip install "ai-agent-inspector[langchain]"
 
 # For development
-pip install "agent-inspector[dev]"
+pip install "ai-agent-inspector[dev]"
 ```
 
 ---
@@ -175,6 +218,165 @@ Root redirects to **/ui/**.
 ## Architecture
 
 Agent Inspector is built around explicit interfaces so each layer can evolve independently.
+
+### High-level system view
+
+```mermaid
+flowchart LR
+    subgraph App["Application"]
+        Agent[Agent / LLM code]
+        Adapter[Framework Adapters]
+    end
+
+    subgraph SDK["Agent Inspector SDK"]
+        Trace[Trace]
+        Queue[EventQueue]
+        Worker[Background Worker]
+    end
+
+    subgraph Export["Exporters"]
+        StorageExp[StorageExporter]
+        OTLPExp[OTLPExporter]
+        Composite[CompositeExporter]
+    end
+
+    subgraph Backends["Backends"]
+        SQLite[(SQLite)]
+        OTLP[OTLP / Jaeger]
+    end
+
+    subgraph Read["Query path"]
+        API[FastAPI]
+        UI[Web UI]
+    end
+
+    Agent --> Trace
+    Adapter --> Trace
+    Trace --> Queue
+    Queue --> Worker
+    Worker --> StorageExp
+    Worker --> OTLPExp
+    Worker --> Composite
+    StorageExp --> SQLite
+    OTLPExp --> OTLP
+    Composite --> StorageExp
+    Composite --> OTLPExp
+    SQLite --> API
+    API --> UI
+```
+
+### Component layers
+
+```mermaid
+flowchart TB
+    subgraph Adapters["Adapters (optional)"]
+        LangChain[LangChain]
+        Custom[Custom adapters]
+    end
+
+    subgraph Core["Core SDK"]
+        TraceC[Trace]
+        Events[Events]
+        Config[TraceConfig]
+        QueueC[EventQueue]
+        Sampler[Sampler]
+        ExporterProto[Exporter protocol]
+    end
+
+    subgraph Processing["Processing"]
+        Pipeline[Pipeline]
+        Redact[Redaction]
+        Serialize[Serialization]
+        Compress[Compression]
+        Encrypt[Encryption]
+    end
+
+    subgraph StorageLayer["Storage"]
+        StorageExpC[StorageExporter]
+        DB[(Database)]
+    end
+
+    subgraph OptionalExport["Optional exporters"]
+        OTLPExpC[OTLPExporter]
+    end
+
+    subgraph Serve["Serve"]
+        APIServer[API]
+        UIServer[UI]
+        ReadStore[ReadStore]
+    end
+
+    LangChain --> TraceC
+    Custom --> TraceC
+    TraceC --> Events
+    TraceC --> QueueC
+    TraceC --> Sampler
+    TraceC --> ExporterProto
+    QueueC --> ExporterProto
+    ExporterProto --> StorageExpC
+    ExporterProto --> OTLPExpC
+    StorageExpC --> Pipeline
+    Pipeline --> Redact --> Serialize --> Compress --> Encrypt
+    Encrypt --> DB
+    DB --> ReadStore
+    ReadStore --> APIServer
+    APIServer --> UIServer
+```
+
+### Event flow (sequence)
+
+From application code to storage: events are emitted synchronously into a queue, then processed asynchronously by a worker that batches and exports.
+
+```mermaid
+sequenceDiagram
+    participant App as Application
+    participant Trace as Trace
+    participant Ctx as TraceContext
+    participant Queue as EventQueue
+    participant Worker as Worker thread
+    participant Exporter as Exporter
+    participant Pipeline as Pipeline
+    participant DB as SQLite
+
+    App->>Trace: trace.run("my_run")
+    Trace->>Ctx: create TraceContext
+    Trace->>App: enter context
+
+    App->>Trace: trace.llm(...) / trace.tool(...)
+    Trace->>Ctx: emit event
+    Ctx->>Queue: put(event) [non-blocking]
+    Note over Queue: Event queued; agent continues
+
+    loop Background worker
+        Worker->>Queue: get batch (size or timeout)
+        Queue-->>Worker: events[]
+        Worker->>Exporter: export_batch(events)
+        Exporter->>Pipeline: process each event
+        Pipeline->>Pipeline: redact → serialize → compress → encrypt
+        Pipeline->>DB: insert run / steps
+    end
+
+    App->>Trace: exit context
+    Trace->>Ctx: run_end
+    Ctx->>Queue: put(run_end)
+```
+
+### Data pipeline (storage path)
+
+Events written to SQLite pass through the processing pipeline before persistence.
+
+```mermaid
+flowchart LR
+    A[Raw event] --> B[Redaction]
+    B --> C[JSON serialize]
+    C --> D{Compression?}
+    D -->|yes| E[Gzip]
+    D -->|no| F[Encryption?]
+    E --> F
+    F -->|yes| G[Fernet encrypt]
+    F -->|no| H[(SQLite)]
+    G --> H
+```
 
 ### SDK Core
 - `Trace` provides the context manager API (`trace.run(...)`) and event emission.
@@ -555,7 +757,7 @@ GET /v1/stats
 Install the optional dependency:
 
 ```bash
-pip install "agent-inspector[langchain]"
+pip install "ai-agent-inspector[langchain]"
 ```
 
 Automatic tracing:
@@ -624,8 +826,8 @@ with trace.run("custom_agent"):
 
 ```bash
 # Clone the repository
-git clone https://github.com/Fission-AI/AgentInspector.git
-cd AgentInspector
+git clone https://github.com/koladilip/ai-agent-inspector.git
+cd ai-agent-inspector
 
 # Install in development mode
 pip install -e ".[dev]"
@@ -818,8 +1020,8 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## Support
 
-- 📖 [Documentation](https://github.com/Fission-AI/AgentInspector#readme)
-- 🐛 [Issue Tracker](https://github.com/Fission-AI/AgentInspector/issues)
+- 📖 [Documentation](https://github.com/koladilip/ai-agent-inspector#readme)
+- 🐛 [Issue Tracker](https://github.com/koladilip/ai-agent-inspector/issues)
 - 💬 [Discord](https://discord.gg/YctCnvvshC)
 - 📧 Email: team@agentinspector.dev
 
@@ -834,5 +1036,5 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 **Made with ❤️ by the Agent Inspector Team**
 
-[⭐ Star us on GitHub](https://github.com/Fission-AI/AgentInspector)
+[⭐ Star us on GitHub](https://github.com/koladilip/ai-agent-inspector)
 </div>
