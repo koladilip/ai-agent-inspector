@@ -1,48 +1,64 @@
-# Publish ai-agent-inspector to PyPI when a version tag is pushed.
-# Uses PyPI Trusted Publishing (OIDC) — no API token stored in GitHub.
+# Combined: Release Please (create/update Release PR, then tag+release on merge) + PyPI publish.
 #
-# TRIGGERED BY release-please.yml: when you merge the Release PR, Release Please
-# creates the tag (e.g. v1.0.0); that tag push runs this workflow.
+# Triggers:
+# - push to main → release-please runs; if it created a release, publish runs.
+# - push to tag v* → only publish runs (manual release path).
+#
+# Use conventional commits (feat:, fix:, BREAKING CHANGE:). Merge the Release PR
+# to create the tag and release; publish runs in the same run or on the tag push.
 #
 # One-time setup:
-#
-# A. GitHub: create a "pypi" environment (recommended for publish gating)
-#    Repo → Settings → Environments → New environment → name: pypi
-#    Optionally: add "Required reviewers" or restrict "Deployment branches"
-#    so only certain people can trigger publishes.
-#
-# B. PyPI: add trusted publisher
-#    Project on pypi.org → Publishing → Add a new trusted publisher
-#    - Owner: koladilip
-#    - Repository name: ai-agent-inspector (match PyPI project name)
-#    - Workflow name: publish.yml
-#    - Environment: pypi   (must match the job environment below)
-#
-# To release: use Release Please (conventional commits on main). It opens a
-# Release PR; when you merge it, this workflow runs on the new tag and publishes to PyPI.
-# Or manually: git tag v1.0.0 && git push origin v1.0.0
+# - GitHub: create environment "pypi".
+# - PyPI Trusted Publisher: workflow name must be "release-and-publish.yml" (this file).
+# If releases aren't created on merge: add PAT as RELEASE_PLEASE_TOKEN.
 
-name: Publish to PyPI
+name: Release and Publish
 
 on:
   push:
+    branches:
+      - main
     tags:
-      - 'v*'   # e.g. v1.0.0, v1.0.1
-  release:
-    types: [published]   # Release Please creates releases via API; this reliably triggers publish
+      - 'v*'
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  id-token: write   # required for PyPI Trusted Publishing
+
+concurrency:
+  group: release-publish-${{ github.ref_name }}
+  cancel-in-progress: false
 
 jobs:
-  publish:
+  release-please:
     runs-on: ubuntu-latest
-    environment: pypi   # Uses repo environment; restricts who can publish if configured
+    if: github.ref == 'refs/heads/main'
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+    steps:
+      - uses: googleapis/release-please-action@v4
+        id: release
+        with:
+          config-file: release-please-config.json
+
+  publish-pypi:
+    needs: release-please
+    if: |
+      (needs.release-please.result == 'success' && needs.release-please.outputs.release_created == 'true') ||
+      (needs.release-please.result == 'skipped' && startsWith(github.ref, 'refs/tags/v'))
+    runs-on: ubuntu-latest
+    environment: pypi
     permissions:
       contents: read
-      id-token: write   # Required for OIDC / Trusted Publishing
+      id-token: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.release.tag_name || github.ref }}
+          ref: ${{ needs.release-please.outputs.tag_name || github.ref }}
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -57,4 +73,3 @@ jobs:
 
       - name: Publish to PyPI (Trusted Publishing / OIDC)
         uses: pypa/gh-action-pypi-publish@release/v1
-        # No TWINE_USERNAME / TWINE_PASSWORD; PyPI trusts the OIDC token from GitHub.
