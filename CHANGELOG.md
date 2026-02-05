@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.1.1 (2026-02-05)
+
+
+### Features
+
+* clarify docs ([1d25a08](https://github.com/koladilip/ai-agent-inspector/commit/1d25a083fec1fc29a9b218faaec57900672f6653))
+
+
+### Miscellaneous Chores
+
+* fix release please ([403b19e](https://github.com/koladilip/ai-agent-inspector/commit/403b19ef3bb23791085edbfa909bf13e93299844))
+
 ## [1.1.0](https://github.com/koladilip/ai-agent-inspector/compare/v1.0.0...v1.1.0) (2026-02-04)
 
 
