@@ -11,7 +11,8 @@
           "path": "pyproject.toml",
           "jsonpath": "$.project.version"
         }
-      ]
+      ],
+      "component": ""
     }
   }
 }
