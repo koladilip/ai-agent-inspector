@@ -13,7 +13,7 @@ Real-world patterns demonstrated:
 - Memory read/write (user preferences)
 - Multi-tool sequence and parallel runs
 
-Required environment variables:
+Required environment variables (in examples/.env):
 - OPENAI_BASE_URL (e.g. https://api.openai.com/v1 or your provider)
 - OPENAI_API_KEY
 - OPENAI_MODEL
@@ -21,6 +21,11 @@ Required environment variables:
 Optional:
 - OPENAI_TEMPERATURE (default: 0.2)
 - OPENAI_TIMEOUT (default: 60)
+
+Setup:
+    1. Copy .env.example to .env in examples directory:
+       cp examples/.env.example examples/.env
+    2. Edit examples/.env and set your API key
 """
 
 from __future__ import annotations
@@ -114,9 +119,21 @@ def tool_search_docs(query: str) -> Dict[str, Any]:
     return {
         "query": query,
         "results": [
-            {"title": "Agent Inspector Overview", "score": 0.92, "snippet": "Framework-agnostic observability for AI agents."},
-            {"title": "Tracing API Reference", "score": 0.88, "snippet": "trace.run(), trace.llm(), trace.tool(), trace.final()."},
-            {"title": "Storage and Retention", "score": 0.73, "snippet": "SQLite with WAL; configurable retention_days."},
+            {
+                "title": "Agent Inspector Overview",
+                "score": 0.92,
+                "snippet": "Framework-agnostic observability for AI agents.",
+            },
+            {
+                "title": "Tracing API Reference",
+                "score": 0.88,
+                "snippet": "trace.run(), trace.llm(), trace.tool(), trace.final().",
+            },
+            {
+                "title": "Storage and Retention",
+                "score": 0.73,
+                "snippet": "SQLite with WAL; configurable retention_days.",
+            },
         ],
     }
 
@@ -163,7 +180,7 @@ def tool_calculate(expression: str) -> Dict[str, Any]:
             if isinstance(node.op, ast.Mod):
                 return left % right
             if isinstance(node.op, ast.Pow):
-                return left ** right
+                return left**right
             raise ValueError("Unsupported operator")
         if isinstance(node, ast.UnaryOp):
             operand = _eval(node.operand)
@@ -207,7 +224,7 @@ def choose_tool(
     system = (
         "You are a tool selector. Decide the best tool and arguments.\n"
         "Return JSON only, no extra text.\n"
-        "Schema: {\"tool\": \"search_docs|calculate|weather\", \"args\": {...}}\n"
+        'Schema: {"tool": "search_docs|calculate|weather", "args": {...}}\n'
         "Use calculate for arithmetic. Use weather for city weather. Use search_docs for everything else."
     )
     user = f"User question: {prompt}"
@@ -215,7 +232,9 @@ def choose_tool(
         {"role": "system", "content": system},
         {"role": "user", "content": user},
     ]
-    content, raw = openai_chat(base_url, api_key, model, messages, temperature, timeout_s)
+    content, raw = openai_chat(
+        base_url, api_key, model, messages, temperature, timeout_s
+    )
     cleaned = _strip_json_fences(content)
     try:
         decision = json.loads(cleaned)
@@ -241,7 +260,9 @@ def choose_tool_with_retry(
             last_error = e
             # Add a tiny delay before retry to simulate network hiccups
             time.sleep(0.4 + attempt * 0.6)
-    raise RuntimeError(f"Tool selection failed after {max_attempts} attempts: {last_error}")
+    raise RuntimeError(
+        f"Tool selection failed after {max_attempts} attempts: {last_error}"
+    )
 
 
 def answer_with_tool(
@@ -260,7 +281,9 @@ def answer_with_tool(
         {"role": "system", "content": system},
         {"role": "user", "content": user},
     ]
-    content, raw = openai_chat(base_url, api_key, model, messages, temperature, timeout_s)
+    content, raw = openai_chat(
+        base_url, api_key, model, messages, temperature, timeout_s
+    )
     return content, messages, raw
 
 
@@ -314,7 +337,14 @@ def _run_single_question(
 
         # 3) Produce final answer
         answer, answer_messages, _raw_answer = answer_with_tool(
-            question, tool_name, tool_result, base_url, api_key, model, temperature, timeout_s
+            question,
+            tool_name,
+            tool_result,
+            base_url,
+            api_key,
+            model,
+            temperature,
+            timeout_s,
         )
         ctx.llm(
             model=model,
@@ -359,14 +389,20 @@ def _suite_scenarios(
             decision = {"tool": "calculate", "args": {"expression": "2 + 2 + BAD"}}
             try:
                 result = tool_calculate(**decision["args"])
-                ctx.tool(tool_name="calculate", tool_args=decision["args"], tool_result=result)
+                ctx.tool(
+                    tool_name="calculate",
+                    tool_args=decision["args"],
+                    tool_result=result,
+                )
             except Exception as e:
                 ctx.tool(
                     tool_name="calculate",
                     tool_args=decision["args"],
                     tool_result={"error": str(e)},
                 )
-                ctx.error(error_type=type(e).__name__, error_message=str(e), critical=False)
+                ctx.error(
+                    error_type=type(e).__name__, error_message=str(e), critical=False
+                )
                 # Fallback: use search and let model answer
                 alt_result = tool_search_docs("2 + 2 arithmetic")
                 ctx.tool(
@@ -395,8 +431,10 @@ def _suite_scenarios(
     with trace.run("scenario_weather_flow", agent_type="custom") as ctx:
         if ctx:
             question = "What's the weather in Boston?"
-            decision, messages, selector_response, _raw_selector = choose_tool_with_retry(
-                question, base_url, api_key, model, temperature, timeout_s
+            decision, messages, selector_response, _raw_selector = (
+                choose_tool_with_retry(
+                    question, base_url, api_key, model, temperature, timeout_s
+                )
             )
             ctx.llm(
                 model=model,
@@ -445,7 +483,9 @@ def _suite_scenarios(
         if ctx:
             tool_args = {"query": "api_key=sk-test-123 password=secret"}
             tool_result = tool_search_docs(tool_args["query"])
-            ctx.tool(tool_name="search_docs", tool_args=tool_args, tool_result=tool_result)
+            ctx.tool(
+                tool_name="search_docs", tool_args=tool_args, tool_result=tool_result
+            )
             answer, answer_messages, _raw_answer = answer_with_tool(
                 "Find docs about API keys.",
                 "search_docs",
@@ -523,7 +563,9 @@ def _suite_scenarios(
 
 def main() -> int:
     if load_dotenv:
-        load_dotenv()
+        # Load .env from examples directory
+        dotenv_path = os.path.join(os.path.dirname(__file__), ".env")
+        load_dotenv(dotenv_path)
 
     try:
         base_url = _require_env("OPENAI_BASE_URL")
@@ -553,7 +595,9 @@ def main() -> int:
         _suite_scenarios(trace, base_url, api_key, model, temperature, timeout_s)
     else:
         question = " ".join(args.question).strip() or "What is 13 * (7 + 5)?"
-        _run_single_question(trace, question, base_url, api_key, model, temperature, timeout_s=timeout_s)
+        _run_single_question(
+            trace, question, base_url, api_key, model, temperature, timeout_s=timeout_s
+        )
 
     trace.shutdown()
     return 0

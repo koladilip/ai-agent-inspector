@@ -53,6 +53,7 @@ class TestDefaultConfiguration:
         # Storage defaults
         assert config.db_path == "agent_inspector.db"
         assert config.retention_days == 30
+        assert config.retention_max_bytes is None
 
         # API defaults
         assert config.api_host == "127.0.0.1"
@@ -294,6 +295,27 @@ class TestEnvironmentVariables:
             assert config.sample_rate == 0.5
             assert config.queue_size == 2000
             assert config.log_level == "DEBUG"
+
+    def test_retention_max_bytes_from_env(self):
+        """Test loading retention_max_bytes from environment."""
+        env_vars = {"TRACE_RETENTION_MAX_BYTES": "5000000"}
+        with patch.dict(os.environ, env_vars, clear=True):
+            config = TraceConfig()
+            assert config.retention_max_bytes == 5000000
+
+    def test_retention_max_bytes_empty_env_is_none(self):
+        """Test that empty or zero TRACE_RETENTION_MAX_BYTES yields None."""
+        env_vars = {"TRACE_RETENTION_MAX_BYTES": ""}
+        with patch.dict(os.environ, env_vars, clear=True):
+            config = TraceConfig()
+            assert config.retention_max_bytes is None
+
+    def test_retention_max_bytes_zero_env_is_none(self):
+        """Test that TRACE_RETENTION_MAX_BYTES=0 yields None."""
+        env_vars = {"TRACE_RETENTION_MAX_BYTES": "0"}
+        with patch.dict(os.environ, env_vars, clear=True):
+            config = TraceConfig()
+            assert config.retention_max_bytes is None
 
 
 class TestRedactionRules:

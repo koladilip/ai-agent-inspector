@@ -99,6 +99,9 @@ class TraceConfig:
     retention_days: int = 30
     """Number of days to retain trace data before pruning."""
 
+    retention_max_bytes: Optional[int] = None
+    """Optional max DB size in bytes; prune oldest runs when exceeded (after retention_days). None = disabled."""
+
     # API Configuration
     api_host: str = "127.0.0.1"
     """Host for API server."""
@@ -257,6 +260,7 @@ class TraceConfig:
             "TRACE_ENCRYPTION_KEY": ("encryption_key", str),
             "TRACE_DB_PATH": ("db_path", str),
             "TRACE_RETENTION_DAYS": ("retention_days", int),
+            "TRACE_RETENTION_MAX_BYTES": ("retention_max_bytes", self._parse_optional_int),
             "TRACE_API_HOST": ("api_host", str),
             "TRACE_API_PORT": ("api_port", int),
             "TRACE_API_ENABLED": (
@@ -297,6 +301,13 @@ class TraceConfig:
     def _parse_list(self, value: str) -> List[str]:
         """Parse comma-separated list from environment variable."""
         return [item.strip() for item in value.split(",") if item.strip()]
+
+    def _parse_optional_int(self, value: str) -> Optional[int]:
+        """Parse optional int; empty or '0' becomes None."""
+        v = value.strip()
+        if not v or v == "0":
+            return None
+        return int(v)
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert configuration to dictionary."""

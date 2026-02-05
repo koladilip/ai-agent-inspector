@@ -36,13 +36,27 @@ from .events import (
     MemoryReadEvent,
     MemoryWriteEvent,
     ToolCallEvent,
+    AgentCommunicationEvent,
+    AgentHandoffEvent,
+    AgentJoinEvent,
+    AgentLeaveEvent,
+    AgentSpawnEvent,
+    TaskAssignmentEvent,
+    TaskCompletionEvent,
     create_run_end,
+    create_agent_communication,
+    create_agent_handoff,
+    create_agent_join,
+    create_agent_leave,
+    create_agent_spawn,
     create_error,
     create_final_answer,
     create_llm_call,
     create_memory_read,
     create_memory_write,
     create_run_start,
+    create_task_assignment,
+    create_task_completion,
     create_tool_call,
 )
 from .interfaces import Exporter, Sampler
@@ -150,9 +164,9 @@ class TraceContext:
         event_dict = event.to_dict()
         try:
             if critical and getattr(self.config, "block_on_run_end", False):
-                timeout_s = getattr(
-                    self.config, "run_end_block_timeout_ms", 5000
-                ) / 1000.0
+                timeout_s = (
+                    getattr(self.config, "run_end_block_timeout_ms", 5000) / 1000.0
+                )
                 queued = self.queue.put(event_dict, block=True, timeout=timeout_s)
             else:
                 queued = self.queue.put_nowait(event_dict)
@@ -412,6 +426,306 @@ class TraceContext:
         self._active = False
         return event
 
+    # Multi-agent event methods
+
+    def agent_spawn(
+        self,
+        agent_id: str,
+        agent_name: str,
+        agent_role: Optional[str] = None,
+        parent_run_id: Optional[str] = None,
+        agent_config: Optional[Dict[str, Any]] = None,
+        **kwargs,
+    ) -> Optional[AgentSpawnEvent]:
+        """Emit an agent spawn event.
+
+        Args:
+            agent_id: Unique identifier for the spawned agent.
+            agent_name: Human-readable name of the agent.
+            agent_role: Role of the agent (e.g., 'researcher', 'coder').
+            parent_run_id: Run ID of the parent agent.
+            agent_config: Configuration of the spawned agent.
+            **kwargs: Additional parameters.
+
+        Returns:
+            The created agent spawn event.
+        """
+        if not self._active:
+            logger.warning("Attempted to emit event on inactive trace context")
+            return None
+
+        event = create_agent_spawn(
+            run_id=self.run_id,
+            agent_id=agent_id,
+            agent_name=agent_name,
+            agent_role=agent_role,
+            parent_run_id=parent_run_id,
+            agent_config=agent_config or {},
+            parent_event_id=self.parent_event_id,
+            **kwargs,
+        )
+        event.set_completed()
+        self._queue_event(event)
+        return event
+
+    def agent_join(
+        self,
+        agent_id: str,
+        agent_name: str,
+        group_id: Optional[str] = None,
+        group_name: Optional[str] = None,
+        **kwargs,
+    ) -> Optional[AgentJoinEvent]:
+        """Emit an agent join event.
+
+        Args:
+            agent_id: Unique identifier for the joining agent.
+            agent_name: Human-readable name of the agent.
+            group_id: Identifier for the group/conversation.
+            group_name: Name of the group/conversation.
+            **kwargs: Additional parameters.
+
+        Returns:
+            The created agent join event.
+        """
+        if not self._active:
+            logger.warning("Attempted to emit event on inactive trace context")
+            return None
+
+        event = create_agent_join(
+            run_id=self.run_id,
+            agent_id=agent_id,
+            agent_name=agent_name,
+            group_id=group_id,
+            group_name=group_name,
+            parent_event_id=self.parent_event_id,
+            **kwargs,
+        )
+        event.set_completed()
+        self._queue_event(event)
+        return event
+
+    def agent_leave(
+        self,
+        agent_id: str,
+        agent_name: str,
+        group_id: Optional[str] = None,
+        reason: Optional[str] = None,
+        **kwargs,
+    ) -> Optional[AgentLeaveEvent]:
+        """Emit an agent leave event.
+
+        Args:
+            agent_id: Unique identifier for the leaving agent.
+            agent_name: Human-readable name of the agent.
+            group_id: Identifier for the group/conversation.
+            reason: Reason for leaving.
+            **kwargs: Additional parameters.
+
+        Returns:
+            The created agent leave event.
+        """
+        if not self._active:
+            logger.warning("Attempted to emit event on inactive trace context")
+            return None
+
+        event = create_agent_leave(
+            run_id=self.run_id,
+            agent_id=agent_id,
+            agent_name=agent_name,
+            group_id=group_id,
+            reason=reason,
+            parent_event_id=self.parent_event_id,
+            **kwargs,
+        )
+        event.set_completed()
+        self._queue_event(event)
+        return event
+
+    def agent_communication(
+        self,
+        from_agent_id: str,
+        from_agent_name: str,
+        message_content: str,
+        to_agent_id: Optional[str] = None,
+        to_agent_name: Optional[str] = None,
+        message_type: str = "message",
+        group_id: Optional[str] = None,
+        **kwargs,
+    ) -> Optional[AgentCommunicationEvent]:
+        """Emit an agent communication event.
+
+        Args:
+            from_agent_id: Unique identifier of the sender agent.
+            from_agent_name: Human-readable name of the sender agent.
+            message_content: Content of the message.
+            to_agent_id: Unique identifier of the recipient agent.
+            to_agent_name: Human-readable name of the recipient agent.
+            message_type: Type of communication.
+            group_id: Group/conversation ID if part of a group chat.
+            **kwargs: Additional parameters.
+
+        Returns:
+            The created agent communication event.
+        """
+        if not self._active:
+            logger.warning("Attempted to emit event on inactive trace context")
+            return None
+
+        event = create_agent_communication(
+            run_id=self.run_id,
+            from_agent_id=from_agent_id,
+            from_agent_name=from_agent_name,
+            to_agent_id=to_agent_id,
+            to_agent_name=to_agent_name,
+            message_type=message_type,
+            message_content=message_content,
+            group_id=group_id,
+            parent_event_id=self.parent_event_id,
+            **kwargs,
+        )
+        event.set_completed()
+        self._queue_event(event)
+        return event
+
+    def agent_handoff(
+        self,
+        from_agent_id: str,
+        from_agent_name: str,
+        to_agent_id: str,
+        to_agent_name: str,
+        handoff_reason: Optional[str] = None,
+        context_summary: Optional[str] = None,
+        **kwargs,
+    ) -> Optional[AgentHandoffEvent]:
+        """Emit an agent handoff event.
+
+        Args:
+            from_agent_id: Unique identifier of the handing-off agent.
+            from_agent_name: Human-readable name of the handing-off agent.
+            to_agent_id: Unique identifier of the receiving agent.
+            to_agent_name: Human-readable name of the receiving agent.
+            handoff_reason: Reason for the handoff.
+            context_summary: Summary of context being transferred.
+            **kwargs: Additional parameters.
+
+        Returns:
+            The created agent handoff event.
+        """
+        if not self._active:
+            logger.warning("Attempted to emit event on inactive trace context")
+            return None
+
+        event = create_agent_handoff(
+            run_id=self.run_id,
+            from_agent_id=from_agent_id,
+            from_agent_name=from_agent_name,
+            to_agent_id=to_agent_id,
+            to_agent_name=to_agent_name,
+            handoff_reason=handoff_reason,
+            context_summary=context_summary,
+            parent_event_id=self.parent_event_id,
+            **kwargs,
+        )
+        event.set_completed()
+        self._queue_event(event)
+        return event
+
+    def task_assign(
+        self,
+        task_id: str,
+        task_name: str,
+        assigned_to_agent_id: str,
+        assigned_to_agent_name: str,
+        assigned_by_agent_id: Optional[str] = None,
+        priority: Optional[str] = None,
+        deadline: Optional[int] = None,
+        task_data: Optional[Dict[str, Any]] = None,
+        **kwargs,
+    ) -> Optional[TaskAssignmentEvent]:
+        """Emit a task assignment event.
+
+        Args:
+            task_id: Unique identifier for the task.
+            task_name: Human-readable name/description of the task.
+            assigned_to_agent_id: Agent ID that the task is assigned to.
+            assigned_to_agent_name: Human-readable name of the assigned agent.
+            assigned_by_agent_id: Agent ID that assigned the task.
+            priority: Task priority.
+            deadline: Deadline timestamp in milliseconds.
+            task_data: Additional task-specific data.
+            **kwargs: Additional parameters.
+
+        Returns:
+            The created task assignment event.
+        """
+        if not self._active:
+            logger.warning("Attempted to emit event on inactive trace context")
+            return None
+
+        event = create_task_assignment(
+            run_id=self.run_id,
+            task_id=task_id,
+            task_name=task_name,
+            assigned_to_agent_id=assigned_to_agent_id,
+            assigned_to_agent_name=assigned_to_agent_name,
+            assigned_by_agent_id=assigned_by_agent_id,
+            priority=priority,
+            deadline=deadline,
+            task_data=task_data or {},
+            parent_event_id=self.parent_event_id,
+            **kwargs,
+        )
+        event.set_completed()
+        self._queue_event(event)
+        return event
+
+    def task_complete(
+        self,
+        task_id: str,
+        task_name: str,
+        completed_by_agent_id: str,
+        completed_by_agent_name: str,
+        success: bool = True,
+        result: Optional[Any] = None,
+        completion_time_ms: Optional[int] = None,
+        **kwargs,
+    ) -> Optional[TaskCompletionEvent]:
+        """Emit a task completion event.
+
+        Args:
+            task_id: Unique identifier for the task.
+            task_name: Human-readable name/description of the task.
+            completed_by_agent_id: Agent ID that completed the task.
+            completed_by_agent_name: Human-readable name of the completing agent.
+            success: Whether the task was completed successfully.
+            result: Result/output of the task.
+            completion_time_ms: Time taken to complete the task in milliseconds.
+            **kwargs: Additional parameters.
+
+        Returns:
+            The created task completion event.
+        """
+        if not self._active:
+            logger.warning("Attempted to emit event on inactive trace context")
+            return None
+
+        event = create_task_completion(
+            run_id=self.run_id,
+            task_id=task_id,
+            task_name=task_name,
+            completed_by_agent_id=completed_by_agent_id,
+            completed_by_agent_name=completed_by_agent_name,
+            success=success,
+            result=result,
+            completion_time_ms=completion_time_ms,
+            parent_event_id=self.parent_event_id,
+            **kwargs,
+        )
+        event.set_completed()
+        self._queue_event(event)
+        return event
+
     def emit(self, event: BaseEvent) -> Optional[BaseEvent]:
         """
         Emit an arbitrary event on this context.
@@ -631,7 +945,7 @@ class Trace:
             # Set end time
             context.end_time_ms = int(time.time() * 1000)
 
-            duration_ms = context.get_duration_ms()
+            duration_ms = context.get_duration_ms() or 0
 
             # Determine final status
             final_status = "failed" if context._error_occurred else "completed"
@@ -824,6 +1138,122 @@ class Trace:
         logger.warning("No active trace context for final answer")
         return None
 
+    # Multi-agent convenience methods
+
+    def agent_spawn(
+        self, agent_id: str, agent_name: str, **kwargs
+    ) -> Optional[AgentSpawnEvent]:
+        """Emit an agent spawn event on the active trace context."""
+        context = self.get_active_context()
+        if context:
+            return context.agent_spawn(
+                agent_id=agent_id, agent_name=agent_name, **kwargs
+            )
+        logger.warning("No active trace context for agent spawn")
+        return None
+
+    def agent_join(
+        self, agent_id: str, agent_name: str, **kwargs
+    ) -> Optional[AgentJoinEvent]:
+        """Emit an agent join event on the active trace context."""
+        context = self.get_active_context()
+        if context:
+            return context.agent_join(
+                agent_id=agent_id, agent_name=agent_name, **kwargs
+            )
+        logger.warning("No active trace context for agent join")
+        return None
+
+    def agent_leave(
+        self, agent_id: str, agent_name: str, **kwargs
+    ) -> Optional[AgentLeaveEvent]:
+        """Emit an agent leave event on the active trace context."""
+        context = self.get_active_context()
+        if context:
+            return context.agent_leave(
+                agent_id=agent_id, agent_name=agent_name, **kwargs
+            )
+        logger.warning("No active trace context for agent leave")
+        return None
+
+    def agent_communication(
+        self, from_agent_id: str, from_agent_name: str, message_content: str, **kwargs
+    ) -> Optional[AgentCommunicationEvent]:
+        """Emit an agent communication event on the active trace context."""
+        context = self.get_active_context()
+        if context:
+            return context.agent_communication(
+                from_agent_id=from_agent_id,
+                from_agent_name=from_agent_name,
+                message_content=message_content,
+                **kwargs,
+            )
+        logger.warning("No active trace context for agent communication")
+        return None
+
+    def agent_handoff(
+        self,
+        from_agent_id: str,
+        from_agent_name: str,
+        to_agent_id: str,
+        to_agent_name: str,
+        **kwargs,
+    ) -> Optional[AgentHandoffEvent]:
+        """Emit an agent handoff event on the active trace context."""
+        context = self.get_active_context()
+        if context:
+            return context.agent_handoff(
+                from_agent_id=from_agent_id,
+                from_agent_name=from_agent_name,
+                to_agent_id=to_agent_id,
+                to_agent_name=to_agent_name,
+                **kwargs,
+            )
+        logger.warning("No active trace context for agent handoff")
+        return None
+
+    def task_assign(
+        self,
+        task_id: str,
+        task_name: str,
+        assigned_to_agent_id: str,
+        assigned_to_agent_name: str,
+        **kwargs,
+    ) -> Optional[TaskAssignmentEvent]:
+        """Emit a task assignment event on the active trace context."""
+        context = self.get_active_context()
+        if context:
+            return context.task_assign(
+                task_id=task_id,
+                task_name=task_name,
+                assigned_to_agent_id=assigned_to_agent_id,
+                assigned_to_agent_name=assigned_to_agent_name,
+                **kwargs,
+            )
+        logger.warning("No active trace context for task assign")
+        return None
+
+    def task_complete(
+        self,
+        task_id: str,
+        task_name: str,
+        completed_by_agent_id: str,
+        completed_by_agent_name: str,
+        **kwargs,
+    ) -> Optional[TaskCompletionEvent]:
+        """Emit a task completion event on the active trace context."""
+        context = self.get_active_context()
+        if context:
+            return context.task_complete(
+                task_id=task_id,
+                task_name=task_name,
+                completed_by_agent_id=completed_by_agent_id,
+                completed_by_agent_name=completed_by_agent_name,
+                **kwargs,
+            )
+        logger.warning("No active trace context for task complete")
+        return None
+
     def emit(self, event: BaseEvent) -> Optional[BaseEvent]:
         """
         Emit an arbitrary event on the active trace context.
@@ -957,3 +1387,84 @@ def error(error_type: str, error_message: str, **kwargs):
 def final(answer: str, **kwargs):
     """Emit a final answer event using the global trace instance."""
     return get_trace().final(answer=answer, **kwargs)
+
+
+# Multi-agent global convenience functions
+
+
+def agent_spawn(agent_id: str, agent_name: str, **kwargs):
+    """Emit an agent spawn event using the global trace instance."""
+    return get_trace().agent_spawn(agent_id=agent_id, agent_name=agent_name, **kwargs)
+
+
+def agent_join(agent_id: str, agent_name: str, **kwargs):
+    """Emit an agent join event using the global trace instance."""
+    return get_trace().agent_join(agent_id=agent_id, agent_name=agent_name, **kwargs)
+
+
+def agent_leave(agent_id: str, agent_name: str, **kwargs):
+    """Emit an agent leave event using the global trace instance."""
+    return get_trace().agent_leave(agent_id=agent_id, agent_name=agent_name, **kwargs)
+
+
+def agent_communication(
+    from_agent_id: str, from_agent_name: str, message_content: str, **kwargs
+):
+    """Emit an agent communication event using the global trace instance."""
+    return get_trace().agent_communication(
+        from_agent_id=from_agent_id,
+        from_agent_name=from_agent_name,
+        message_content=message_content,
+        **kwargs,
+    )
+
+
+def agent_handoff(
+    from_agent_id: str,
+    from_agent_name: str,
+    to_agent_id: str,
+    to_agent_name: str,
+    **kwargs,
+):
+    """Emit an agent handoff event using the global trace instance."""
+    return get_trace().agent_handoff(
+        from_agent_id=from_agent_id,
+        from_agent_name=from_agent_name,
+        to_agent_id=to_agent_id,
+        to_agent_name=to_agent_name,
+        **kwargs,
+    )
+
+
+def task_assign(
+    task_id: str,
+    task_name: str,
+    assigned_to_agent_id: str,
+    assigned_to_agent_name: str,
+    **kwargs,
+):
+    """Emit a task assignment event using the global trace instance."""
+    return get_trace().task_assign(
+        task_id=task_id,
+        task_name=task_name,
+        assigned_to_agent_id=assigned_to_agent_id,
+        assigned_to_agent_name=assigned_to_agent_name,
+        **kwargs,
+    )
+
+
+def task_complete(
+    task_id: str,
+    task_name: str,
+    completed_by_agent_id: str,
+    completed_by_agent_name: str,
+    **kwargs,
+):
+    """Emit a task completion event using the global trace instance."""
+    return get_trace().task_complete(
+        task_id=task_id,
+        task_name=task_name,
+        completed_by_agent_id=completed_by_agent_id,
+        completed_by_agent_name=completed_by_agent_name,
+        **kwargs,
+    )

@@ -43,6 +43,11 @@ from .core.interfaces import Exporter, Sampler
 from .core.trace import (
     Trace,
     TraceContext,
+    agent_communication,
+    agent_handoff,
+    agent_join,
+    agent_leave,
+    agent_spawn,
     error,
     final,
     get_trace,
@@ -51,6 +56,8 @@ from .core.trace import (
     memory_write,
     run,
     set_trace,
+    task_assign,
+    task_complete,
     tool,
 )
 
@@ -71,6 +78,11 @@ except ImportError:
 
 # Event types
 from .core.events import (
+    AgentCommunicationEvent,
+    AgentHandoffEvent,
+    AgentJoinEvent,
+    AgentLeaveEvent,
+    AgentSpawnEvent,
     BaseEvent,
     ErrorEvent,
     EventStatus,
@@ -81,6 +93,8 @@ from .core.events import (
     MemoryWriteEvent,
     RunEndEvent,
     RunStartEvent,
+    TaskAssignmentEvent,
+    TaskCompletionEvent,
     ToolCallEvent,
 )
 
@@ -100,6 +114,14 @@ __all__ = [
     "final",
     "get_trace",
     "set_trace",
+    # Multi-agent tracing
+    "agent_spawn",
+    "agent_join",
+    "agent_leave",
+    "agent_communication",
+    "agent_handoff",
+    "task_assign",
+    "task_complete",
     # Configuration
     "TraceConfig",
     "Profile",
@@ -121,6 +143,14 @@ __all__ = [
     "MemoryWriteEvent",
     "ErrorEvent",
     "FinalAnswerEvent",
+    # Multi-agent event types
+    "AgentSpawnEvent",
+    "AgentJoinEvent",
+    "AgentLeaveEvent",
+    "AgentCommunicationEvent",
+    "AgentHandoffEvent",
+    "TaskAssignmentEvent",
+    "TaskCompletionEvent",
     # Adapters (optional)
     "enable_langchain",
     # API server (optional)

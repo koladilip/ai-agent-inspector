@@ -716,6 +716,64 @@ class Database:
             logger.error(f"Failed to prune old runs: {e}")
             return 0
 
+    def prune_by_size(self, max_bytes: int, batch_size: int = 50, max_iterations: int = 20) -> int:
+        """
+        Delete oldest runs until database size is at or below max_bytes.
+
+        Runs VACUUM after each batch so size is accurately reflected. Stops when
+        size <= max_bytes, no runs remain, or max_iterations is reached.
+
+        Args:
+            max_bytes: Target maximum database size in bytes.
+            batch_size: Number of oldest runs to delete per iteration.
+            max_iterations: Maximum number of delete+vacuum cycles (safety cap).
+
+        Returns:
+            Total number of runs deleted.
+        """
+        if max_bytes <= 0:
+            logger.info("Prune by size disabled (max_bytes <= 0)")
+            return 0
+
+        total_deleted = 0
+        try:
+            for _ in range(max_iterations):
+                stats = self.get_stats()
+                size = stats.get("db_size_bytes", 0)
+                if size <= max_bytes:
+                    break
+
+                conn = self._get_connection()
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT id FROM runs ORDER BY started_at ASC LIMIT ?",
+                    (batch_size,),
+                )
+                rows = cursor.fetchall()
+                if not rows:
+                    break
+
+                run_ids = [row["id"] for row in rows]
+                placeholders = ",".join("?" * len(run_ids))
+                cursor.execute(
+                    f"DELETE FROM runs WHERE id IN ({placeholders})",
+                    run_ids,
+                )
+                conn.commit()
+                deleted = cursor.rowcount
+                total_deleted += deleted
+                logger.debug(f"Pruned {deleted} runs by size (total {total_deleted})")
+
+                self.vacuum()
+            if total_deleted:
+                logger.info(
+                    f"Pruned {total_deleted} runs by size (target max_bytes={max_bytes})"
+                )
+            return total_deleted
+        except Exception as e:
+            logger.error(f"Failed to prune by size: {e}")
+            return total_deleted
+
     def vacuum(self) -> bool:
         """
         Run VACUUM to reclaim disk space.

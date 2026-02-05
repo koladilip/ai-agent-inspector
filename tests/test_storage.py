@@ -1167,6 +1167,57 @@ class TestMaintenanceOperations:
         deleted_count = db.prune_old_runs()
         assert deleted_count == 1
 
+    def test_prune_by_size_disabled(self, db):
+        """Test prune_by_size with max_bytes <= 0 does nothing."""
+        assert db.prune_by_size(0) == 0
+        assert db.prune_by_size(-1) == 0
+
+    def test_prune_by_size_no_prune_needed(self, db):
+        """Test prune_by_size when size already below max_bytes."""
+        # Very high max_bytes: no pruning needed
+        deleted = db.prune_by_size(10**12)
+        assert deleted == 0
+
+    def test_prune_by_size_deletes_oldest_runs(self, db):
+        """Test prune_by_size deletes oldest runs when size exceeds max_bytes."""
+        import json as json_module
+
+        # Insert two runs with steps so DB has measurable size
+        for i, run_id in enumerate(("size-run-1", "size-run-2")):
+            db.insert_run(
+                {
+                    "id": run_id,
+                    "name": f"Run {i}",
+                    "status": "completed",
+                    "started_at": 1000 + i * 1000,
+                }
+            )
+            event_dict = {
+                "event_id": f"ev-{run_id}",
+                "run_id": run_id,
+                "timestamp_ms": 2000 + i,
+                "type": "llm_call",
+                "name": "LLM",
+                "status": "completed",
+                "duration_ms": 10,
+                "parent_event_id": None,
+            }
+            # Minimal blob to grow DB
+            processed = json_module.dumps(event_dict).encode("utf-8")
+            db.insert_steps([(event_dict, processed)])
+
+        stats_before = db.get_stats()
+        size_before = stats_before.get("db_size_bytes", 0)
+        assert size_before > 0
+        assert stats_before.get("total_runs") == 2
+
+        # Prune until size <= 1 (aggressive)
+        deleted = db.prune_by_size(1)
+
+        assert deleted >= 1
+        stats_after = db.get_stats()
+        assert stats_after.get("total_runs") <= 1
+
     def test_vacuum(self, db):
         """Test vacuum operation."""
         # Insert some data

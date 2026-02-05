@@ -28,6 +28,22 @@ class EventType(str, Enum):
     CUSTOM = "custom"
     """Use for custom events via TraceContext.emit() or Trace.emit()."""
 
+    # Multi-agent events
+    AGENT_SPAWN = "agent_spawn"
+    """Event when a new agent is spawned/created in a multi-agent system."""
+    AGENT_JOIN = "agent_join"
+    """Event when an agent joins a conversation/group chat."""
+    AGENT_LEAVE = "agent_leave"
+    """Event when an agent leaves a conversation/group chat."""
+    AGENT_COMMUNICATION = "agent_communication"
+    """Event capturing communication between agents (messages)."""
+    AGENT_HANDOFF = "agent_handoff"
+    """Event capturing handoff from one agent to another."""
+    TASK_ASSIGNMENT = "task_assignment"
+    """Event when a task is assigned to an agent."""
+    TASK_COMPLETION = "task_completion"
+    """Event when an agent completes a task."""
+
 
 class EventStatus(str, Enum):
     """Status of events (for async events like LLM calls)."""
@@ -153,6 +169,7 @@ class RunEndEvent(BaseEvent):
         data = super().to_dict()
         data["run_status"] = self.run_status
         return data
+
 
 @dataclass
 class LLMCallEvent(BaseEvent):
@@ -284,6 +301,181 @@ class FinalAnswerEvent(BaseEvent):
         """Validate final answer event after initialization."""
         super().__post_init__()
         self.name = "Final Answer"
+
+
+# Multi-agent event types
+
+
+@dataclass
+class AgentSpawnEvent(BaseEvent):
+    """Event capturing agent creation/spawning in multi-agent systems."""
+
+    type: EventType = EventType.AGENT_SPAWN
+    agent_id: str = ""
+    """Unique identifier for the spawned agent."""
+    agent_name: str = ""
+    """Human-readable name of the agent."""
+    agent_role: Optional[str] = None
+    """Role of the agent (e.g., 'researcher', 'coder', 'reviewer')."""
+    parent_run_id: Optional[str] = None
+    """Run ID of the parent agent that spawned this agent."""
+    agent_config: Dict[str, Any] = field(default_factory=dict)
+    """Configuration of the spawned agent (model, tools, etc.)."""
+
+    def __post_init__(self):
+        """Validate agent spawn event after initialization."""
+        super().__post_init__()
+        self.name = f"Spawn: {self.agent_name or self.agent_id}"
+
+
+@dataclass
+class AgentJoinEvent(BaseEvent):
+    """Event capturing agent joining a group chat or conversation."""
+
+    type: EventType = EventType.AGENT_JOIN
+    agent_id: str = ""
+    """Unique identifier for the joining agent."""
+    agent_name: str = ""
+    """Human-readable name of the agent."""
+    group_id: Optional[str] = None
+    """Identifier for the group/conversation being joined."""
+    group_name: Optional[str] = None
+    """Name of the group/conversation."""
+
+    def __post_init__(self):
+        """Validate agent join event after initialization."""
+        super().__post_init__()
+        self.name = f"Join: {self.agent_name or self.agent_id}"
+
+
+@dataclass
+class AgentLeaveEvent(BaseEvent):
+    """Event capturing agent leaving a group chat or conversation."""
+
+    type: EventType = EventType.AGENT_LEAVE
+    agent_id: str = ""
+    """Unique identifier for the leaving agent."""
+    agent_name: str = ""
+    """Human-readable name of the agent."""
+    group_id: Optional[str] = None
+    """Identifier for the group/conversation being left."""
+    reason: Optional[str] = None
+    """Reason for leaving (e.g., 'task_complete', 'error', 'timeout')."""
+
+    def __post_init__(self):
+        """Validate agent leave event after initialization."""
+        super().__post_init__()
+        self.name = f"Leave: {self.agent_name or self.agent_id}"
+
+
+@dataclass
+class AgentCommunicationEvent(BaseEvent):
+    """Event capturing communication between agents."""
+
+    type: EventType = EventType.AGENT_COMMUNICATION
+    from_agent_id: str = ""
+    """Unique identifier of the sender agent."""
+    from_agent_name: str = ""
+    """Human-readable name of the sender agent."""
+    to_agent_id: Optional[str] = None
+    """Unique identifier of the recipient agent (None for broadcast)."""
+    to_agent_name: Optional[str] = None
+    """Human-readable name of the recipient agent."""
+    message_type: str = "message"
+    """Type of communication (e.g., 'message', 'request', 'response', 'handoff')."""
+    message_content: str = ""
+    """Content of the message."""
+    group_id: Optional[str] = None
+    """Group/conversation ID if part of a group chat."""
+    metadata: Dict[str, Any] = field(default_factory=dict)
+    """Additional metadata about the communication."""
+
+    def __post_init__(self):
+        """Validate agent communication event after initialization."""
+        super().__post_init__()
+        if self.to_agent_id:
+            self.name = f"{self.from_agent_name or self.from_agent_id} → {self.to_agent_name or self.to_agent_id}"
+        else:
+            self.name = f"{self.from_agent_name or self.from_agent_id} → All"
+
+
+@dataclass
+class AgentHandoffEvent(BaseEvent):
+    """Event capturing handoff from one agent to another."""
+
+    type: EventType = EventType.AGENT_HANDOFF
+    from_agent_id: str = ""
+    """Unique identifier of the handing-off agent."""
+    from_agent_name: str = ""
+    """Human-readable name of the handing-off agent."""
+    to_agent_id: str = ""
+    """Unique identifier of the receiving agent."""
+    to_agent_name: str = ""
+    """Human-readable name of the receiving agent."""
+    handoff_reason: Optional[str] = None
+    """Reason for the handoff (e.g., 'specialization', 'escalation', 'load_balancing')."""
+    context_summary: Optional[str] = None
+    """Summary of context being transferred."""
+
+    def __post_init__(self):
+        """Validate agent handoff event after initialization."""
+        super().__post_init__()
+        self.name = f"Handoff: {self.from_agent_name or self.from_agent_id} → {self.to_agent_name or self.to_agent_id}"
+
+
+@dataclass
+class TaskAssignmentEvent(BaseEvent):
+    """Event capturing task assignment to an agent."""
+
+    type: EventType = EventType.TASK_ASSIGNMENT
+    task_id: str = ""
+    """Unique identifier for the task."""
+    task_name: str = ""
+    """Human-readable name/description of the task."""
+    assigned_to_agent_id: str = ""
+    """Agent ID that the task is assigned to."""
+    assigned_to_agent_name: str = ""
+    """Human-readable name of the assigned agent."""
+    assigned_by_agent_id: Optional[str] = None
+    """Agent ID that assigned the task (None for system assignment)."""
+    priority: Optional[str] = None
+    """Task priority (e.g., 'high', 'medium', 'low')."""
+    deadline: Optional[int] = None
+    """Deadline timestamp in milliseconds (if any)."""
+    task_data: Dict[str, Any] = field(default_factory=dict)
+    """Additional task-specific data."""
+
+    def __post_init__(self):
+        """Validate task assignment event after initialization."""
+        super().__post_init__()
+        self.name = f"Task: {self.task_name or self.task_id} → {self.assigned_to_agent_name or self.assigned_to_agent_id}"
+
+
+@dataclass
+class TaskCompletionEvent(BaseEvent):
+    """Event capturing task completion by an agent."""
+
+    type: EventType = EventType.TASK_COMPLETION
+    task_id: str = ""
+    """Unique identifier for the task."""
+    task_name: str = ""
+    """Human-readable name/description of the task."""
+    completed_by_agent_id: str = ""
+    """Agent ID that completed the task."""
+    completed_by_agent_name: str = ""
+    """Human-readable name of the completing agent."""
+    success: bool = True
+    """Whether the task was completed successfully."""
+    result: Optional[Any] = None
+    """Result/output of the task."""
+    completion_time_ms: Optional[int] = None
+    """Time taken to complete the task in milliseconds."""
+
+    def __post_init__(self):
+        """Validate task completion event after initialization."""
+        super().__post_init__()
+        status = "✓" if self.success else "✗"
+        self.name = f"{status} Task: {self.task_name or self.task_id}"
 
 
 # Event factory functions
@@ -418,6 +610,182 @@ def create_final_answer(
     return FinalAnswerEvent(
         run_id=run_id,
         answer=answer,
+        parent_event_id=parent_event_id,
+        **kwargs,
+    )
+
+
+# Multi-agent event factory functions
+
+
+def create_agent_spawn(
+    run_id: str,
+    agent_id: str,
+    agent_name: str,
+    agent_role: Optional[str] = None,
+    parent_run_id: Optional[str] = None,
+    agent_config: Optional[Dict[str, Any]] = None,
+    parent_event_id: Optional[str] = None,
+    **kwargs,
+) -> AgentSpawnEvent:
+    """Create an agent spawn event."""
+    return AgentSpawnEvent(
+        run_id=run_id,
+        agent_id=agent_id,
+        agent_name=agent_name,
+        agent_role=agent_role,
+        parent_run_id=parent_run_id,
+        agent_config=agent_config or {},
+        parent_event_id=parent_event_id,
+        **kwargs,
+    )
+
+
+def create_agent_join(
+    run_id: str,
+    agent_id: str,
+    agent_name: str,
+    group_id: Optional[str] = None,
+    group_name: Optional[str] = None,
+    parent_event_id: Optional[str] = None,
+    **kwargs,
+) -> AgentJoinEvent:
+    """Create an agent join event."""
+    return AgentJoinEvent(
+        run_id=run_id,
+        agent_id=agent_id,
+        agent_name=agent_name,
+        group_id=group_id,
+        group_name=group_name,
+        parent_event_id=parent_event_id,
+        **kwargs,
+    )
+
+
+def create_agent_leave(
+    run_id: str,
+    agent_id: str,
+    agent_name: str,
+    group_id: Optional[str] = None,
+    reason: Optional[str] = None,
+    parent_event_id: Optional[str] = None,
+    **kwargs,
+) -> AgentLeaveEvent:
+    """Create an agent leave event."""
+    return AgentLeaveEvent(
+        run_id=run_id,
+        agent_id=agent_id,
+        agent_name=agent_name,
+        group_id=group_id,
+        reason=reason,
+        parent_event_id=parent_event_id,
+        **kwargs,
+    )
+
+
+def create_agent_communication(
+    run_id: str,
+    from_agent_id: str,
+    from_agent_name: str,
+    message_content: str,
+    to_agent_id: Optional[str] = None,
+    to_agent_name: Optional[str] = None,
+    message_type: str = "message",
+    group_id: Optional[str] = None,
+    parent_event_id: Optional[str] = None,
+    **kwargs,
+) -> AgentCommunicationEvent:
+    """Create an agent communication event."""
+    return AgentCommunicationEvent(
+        run_id=run_id,
+        from_agent_id=from_agent_id,
+        from_agent_name=from_agent_name,
+        to_agent_id=to_agent_id,
+        to_agent_name=to_agent_name,
+        message_type=message_type,
+        message_content=message_content,
+        group_id=group_id,
+        parent_event_id=parent_event_id,
+        **kwargs,
+    )
+
+
+def create_agent_handoff(
+    run_id: str,
+    from_agent_id: str,
+    from_agent_name: str,
+    to_agent_id: str,
+    to_agent_name: str,
+    handoff_reason: Optional[str] = None,
+    context_summary: Optional[str] = None,
+    parent_event_id: Optional[str] = None,
+    **kwargs,
+) -> AgentHandoffEvent:
+    """Create an agent handoff event."""
+    return AgentHandoffEvent(
+        run_id=run_id,
+        from_agent_id=from_agent_id,
+        from_agent_name=from_agent_name,
+        to_agent_id=to_agent_id,
+        to_agent_name=to_agent_name,
+        handoff_reason=handoff_reason,
+        context_summary=context_summary,
+        parent_event_id=parent_event_id,
+        **kwargs,
+    )
+
+
+def create_task_assignment(
+    run_id: str,
+    task_id: str,
+    task_name: str,
+    assigned_to_agent_id: str,
+    assigned_to_agent_name: str,
+    assigned_by_agent_id: Optional[str] = None,
+    priority: Optional[str] = None,
+    deadline: Optional[int] = None,
+    task_data: Optional[Dict[str, Any]] = None,
+    parent_event_id: Optional[str] = None,
+    **kwargs,
+) -> TaskAssignmentEvent:
+    """Create a task assignment event."""
+    return TaskAssignmentEvent(
+        run_id=run_id,
+        task_id=task_id,
+        task_name=task_name,
+        assigned_to_agent_id=assigned_to_agent_id,
+        assigned_to_agent_name=assigned_to_agent_name,
+        assigned_by_agent_id=assigned_by_agent_id,
+        priority=priority,
+        deadline=deadline,
+        task_data=task_data or {},
+        parent_event_id=parent_event_id,
+        **kwargs,
+    )
+
+
+def create_task_completion(
+    run_id: str,
+    task_id: str,
+    task_name: str,
+    completed_by_agent_id: str,
+    completed_by_agent_name: str,
+    success: bool = True,
+    result: Optional[Any] = None,
+    completion_time_ms: Optional[int] = None,
+    parent_event_id: Optional[str] = None,
+    **kwargs,
+) -> TaskCompletionEvent:
+    """Create a task completion event."""
+    return TaskCompletionEvent(
+        run_id=run_id,
+        task_id=task_id,
+        task_name=task_name,
+        completed_by_agent_id=completed_by_agent_id,
+        completed_by_agent_name=completed_by_agent_name,
+        success=success,
+        result=result,
+        completion_time_ms=completion_time_ms,
         parent_event_id=parent_event_id,
         **kwargs,
     )

@@ -193,12 +193,59 @@ def test_stats_endpoint():
     assert "total_runs" in body
 
 
+def test_stats_may_include_queue_when_trace_has_queue():
+    """GET /v1/stats includes 'queue' when default Trace has an initialized queue."""
+    from unittest.mock import MagicMock, patch
+
+    mock_queue = MagicMock()
+    mock_queue.get_stats.return_value = {
+        "events_queued": 10,
+        "events_dropped": 0,
+        "events_processed": 100,
+        "queue_size": 5,
+        "queue_maxsize": 1000,
+    }
+    mock_trace = MagicMock()
+    mock_trace._queue_manager = MagicMock()
+    mock_trace._queue_manager.get_queue.return_value = mock_queue
+
+    with patch("agent_inspector.core.trace.get_trace", return_value=mock_trace):
+        client = make_client()
+        response = client.get("/v1/stats")
+    assert response.status_code == 200
+    body = response.json()
+    assert "queue" in body
+    assert body["queue"]["events_queued"] == 10
+    assert body["queue"]["queue_size"] == 5
+
+
 def test_health_endpoint():
     client = make_client()
     response = client.get("/health")
     assert response.status_code == 200
     body = response.json()
     assert body["status"] in ("healthy", "unhealthy")
+
+
+def test_health_may_include_queue_when_trace_has_queue():
+    """GET /health includes 'queue' when default Trace has an initialized queue."""
+    from unittest.mock import MagicMock, patch
+
+    mock_queue = MagicMock()
+    mock_queue.is_alive.return_value = True
+    mock_queue.get_stats.return_value = {"queue_size": 3}
+    mock_trace = MagicMock()
+    mock_trace._queue_manager = MagicMock()
+    mock_trace._queue_manager.get_queue.return_value = mock_queue
+
+    with patch("agent_inspector.core.trace.get_trace", return_value=mock_trace):
+        client = make_client()
+        response = client.get("/health")
+    assert response.status_code == 200
+    body = response.json()
+    assert "queue" in body
+    assert body["queue"]["worker_alive"] is True
+    assert body["queue"]["queue_size"] == 3
 
 
 def test_runs_query_validation():

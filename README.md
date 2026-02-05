@@ -107,7 +107,7 @@ Traditional tools model systems as function calls and spans. Agent Inspector mod
 
 ### Storage
 - **SQLite** – WAL mode for concurrent access; runs and steps tables; indexes on run_id and timestamp.
-- **Pruning** – CLI `prune --retention-days N` and optional `--vacuum`; API/DB support for retention.
+- **Pruning** – CLI `prune --retention-days N` and optional `--retention-max-bytes BYTES`, `--vacuum`; API/DB support for retention by age and by size.
 - **Backup** – CLI `backup /path/to/backup.db` for full DB copy.
 - **Export to JSON** – **API** `GET /v1/runs/{run_id}/export` returns run metadata + timeline with decoded event data; **CLI** `agent-inspector export <run_id> [--output file.json]` and `agent-inspector export --all [--limit N] [--output file.json]` for backup or migration.
 
@@ -459,6 +459,7 @@ export TRACE_ENCRYPTION_KEY=your-secret-key-here
 # Storage
 export TRACE_DB_PATH=agent_inspector.db
 export TRACE_RETENTION_DAYS=30
+export TRACE_RETENTION_MAX_BYTES=
 
 # API
 export TRACE_API_HOST=127.0.0.1
@@ -557,23 +558,77 @@ search_flights_agent("Find flights from SFO to JFK")
 This example makes real LLM calls and runs multiple scenarios.
 
 ```bash
-cp .env.example .env
+cp examples/.env.example examples/.env
 ```
 
-Set these in `.env`:
-- `OPENAI_BASE_URL`
-- `OPENAI_API_KEY`
-- `OPENAI_MODEL`
+Set these in `examples/.env`:
+- `OPENAI_API_KEY` - Your API key
+- `OPENAI_BASE_URL` - API endpoint (e.g., `https://api.openai.com/v1` or your custom provider)
+- `OPENAI_MODEL` - Model name (e.g., `gpt-4o-mini`, `glm-4.7`)
+- `OPENAI_TEMPERATURE` - Temperature setting (default: 0.2)
+- `OPENAI_TIMEOUT` - Timeout in seconds (default: 120)
+
+Install dependencies:
+```bash
+uv add openai python-dotenv
+```
 
 Run a single question:
 ```bash
-python examples/real_agent.py "What is 13 * (7 + 5)?"
+uv run python examples/real_agent.py "What is 13 * (7 + 5)?"
 ```
 
 Run the full scenario suite:
 ```bash
-python examples/real_agent.py --suite
+uv run python examples/real_agent.py --suite
 ```
+
+### Multi-Agent Example
+
+This example demonstrates a realistic multi-agent customer support system with:
+- **Agent spawning** with different models per agent
+- **Intelligent routing** to specialized agents (billing, technical, triage, manager)
+- **Tool execution** with realistic operations (profile lookup, billing history, system logs)
+- **Agent communication** with handoffs for escalations
+- **Detailed responses** with contextual, professional customer service replies
+- **Escalation workflow** where complex issues get manager oversight
+
+```bash
+cp examples/.env.example examples/.env
+```
+
+Configure in `examples/.env`:
+- `OPENAI_API_KEY` - Your API key
+- `OPENAI_BASE_URL` - API endpoint
+- `OPENAI_MODEL` - Default model for all agents
+- `MODEL_TRIAGE` - Model for triage agent (optional, falls back to `OPENAI_MODEL`)
+- `MODEL_BILLING` - Model for billing agent (optional)
+- `MODEL_TECHNICAL` - Model for technical agent (optional)
+- `MODEL_MANAGER` - Model for manager agent (optional)
+
+Install dependencies:
+```bash
+uv add openai python-dotenv
+```
+
+Run in simulated mode (no API needed):
+```bash
+python examples/multi_agent.py
+```
+
+Run with real LLM calls:
+```bash
+uv run python examples/multi_agent.py
+```
+
+The example traces:
+- Customer requests with routing analysis
+- Agent-specific tool usage with realistic results
+- Detailed, contextual responses for each customer issue
+- Escalation flows with manager handoffs
+- Task assignment and completion tracking
+
+Note: Without `openai` package and valid API key, this example will use simulated responses with realistic agent behavior. Install `openai` with `uv add openai` and configure `OPENAI_API_KEY` in `examples/.env` for real LLM calls. Use `uv run python` to execute the script with uv's virtual environment.
 
 ### With LangChain (Automatic)
 
@@ -667,6 +722,30 @@ with trace.run("planning_agent", user_id="user123") as main_ctx:
     
     # Main agent continues
     trace.final(answer="I've booked your flight. Confirmation: CONF-12345")
+```
+
+### Async / asyncio
+
+Context is propagated via `contextvars`, so tracing works with asyncio as long as each task has its own `trace.run()` (one run per task). Do not share a single run across concurrent tasks.
+
+```python
+import asyncio
+from agent_inspector import trace
+
+async def agent_task(name: str, query: str):
+    with trace.run(name):
+        trace.llm(model="gpt-4", prompt=query, response=f"Processed: {query}")
+        trace.final(answer=f"Done: {query}")
+    return name
+
+async def main():
+    results = await asyncio.gather(
+        agent_task("agent_1", "Query A"),
+        agent_task("agent_2", "Query B"),
+    )
+    return results
+
+asyncio.run(main())
 ```
 
 ### Memory Operations
@@ -789,34 +868,40 @@ result = chain.run("Your query", callbacks=callbacks)
 
 ### Creating Custom Adapters
 
-Create a new adapter by extending `BaseCallbackHandler` (for LangChain-like frameworks) or by using the Trace SDK directly:
+Use the Trace SDK directly when your framework has no LangChain-style callback API. Checklist:
+
+1. **Entry point** – Wrap agent execution in `trace.run("run_name")` so there is an active context.
+2. **LLM calls** – Where your framework invokes the model, call `context.llm(model=..., prompt=..., response=...)`.
+3. **Tool calls** – Where tools are executed, call `context.tool(tool_name=..., tool_args=..., tool_result=...)`.
+4. **Final answer** – When the agent finishes, call `context.final(answer=...)`.
+5. **Errors** – On failure, call `context.error(error_type=..., error_message=..., critical=...)`.
+
+Template:
 
 ```python
-from agent_inspector import Trace, get_trace
+from agent_inspector import trace, get_trace
 
 class CustomAdapter:
-    def __init__(self, trace: Trace = None):
-        self.trace = trace or get_trace()
-    
-    def on_llm_call(self, model, prompt, response):
-        """Handle LLM calls in your framework."""
+    def __init__(self, trace_instance=None):
+        self.trace = trace_instance or get_trace()
+
+    def on_llm_call(self, model: str, prompt: str, response: str):
         context = self.trace.get_active_context()
         if context:
             context.llm(model=model, prompt=prompt, response=response)
-    
-    def on_tool_call(self, tool_name, args, result):
-        """Handle tool calls in your framework."""
+
+    def on_tool_call(self, tool_name: str, tool_args: dict, tool_result: str):
         context = self.trace.get_active_context()
         if context:
-            context.tool(tool_name=tool_name, tool_args=args, tool_result=result)
+            context.tool(tool_name=tool_name, tool_args=tool_args, tool_result=tool_result)
 
-# Use your adapter
-with trace.run("custom_agent"):
+# Use: always run inside trace.run() so get_active_context() returns a context
+with trace.run("my_agent"):
     adapter = CustomAdapter()
-    
-    # Your framework code
     adapter.on_llm_call("gpt-4", "Hello", "Hi there!")
 ```
+
+For LangChain-like frameworks, extend `BaseCallbackHandler` and pass the handler into the framework's callback list; see the LangChain adapter source for the pattern.
 
 ---
 
@@ -968,8 +1053,8 @@ agent-inspector server [--host HOST] [--port PORT]
 # View statistics
 agent-inspector stats
 
-# Prune old traces
-agent-inspector prune [--retention-days N] [--vacuum]
+# Prune old traces (optionally by size: --retention-max-bytes BYTES)
+agent-inspector prune [--retention-days N] [--retention-max-bytes BYTES] [--vacuum]
 
 # Vacuum database
 agent-inspector vacuum
@@ -1003,6 +1088,12 @@ Agent Inspector is designed for minimal overhead:
 - Queue: ~10KB (1000 events × 10 bytes/event)
 - Background thread: ~5MB (batch processing)
 - Database: Varies with trace volume
+
+### Scaling and alerting
+
+- **Single process / moderate load** – Use the default SQLite storage with sampling and retention (e.g. `retention_days`, optional `retention_max_bytes`). Suitable for one or a few worker processes.
+- **High throughput or many writers** – Use an OTLP or custom exporter to send traces to a central backend (e.g. Jaeger, Tempo, Grafana). The built-in UI and API then serve only that process; aggregate viewing is in your backend.
+- **Alerting** – The SDK does not push alerts. Use the API from your own checks: e.g. `GET /v1/stats` for `failed_runs`, `recent_runs_24h`, or `queue.events_dropped` (when the default Trace is in use), and alert when thresholds are exceeded. Optionally run `agent-inspector prune` on a schedule to enforce retention.
 
 ---
 

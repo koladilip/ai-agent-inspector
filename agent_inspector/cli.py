@@ -113,18 +113,30 @@ def cmd_prune(args):
     # Override with CLI arguments
     if args.retention_days is not None:
         config.retention_days = args.retention_days
+    if getattr(args, "retention_max_bytes", None) is not None:
+        config.retention_max_bytes = args.retention_max_bytes
 
     # Initialize database
     db = Database(config)
     db.initialize()
 
-    # Prune old runs
+    # Prune by age first
     deleted_count = db.prune_old_runs(retention_days=config.retention_days)
+    size_deleted = 0
+
+    # Then prune by size if configured
+    max_bytes = config.retention_max_bytes
+    if max_bytes is not None and max_bytes > 0:
+        size_deleted = db.prune_by_size(max_bytes)
+        deleted_count += size_deleted
+        if size_deleted > 0:
+            print(f"✅ Pruned {size_deleted} runs by size (max_bytes={max_bytes})")
 
     if deleted_count > 0:
-        print(f"✅ Pruned {deleted_count} old runs")
+        if size_deleted == 0:  # only age-based pruning had effect
+            print(f"✅ Pruned {deleted_count} old runs")
 
-        # Optionally vacuum to reclaim space
+        # Optionally vacuum to reclaim space (prune_by_size already vacuums)
         if args.vacuum:
             print("💾 Running VACUUM to reclaim disk space...")
             if db.vacuum():
@@ -407,6 +419,13 @@ Examples:
         "--retention-days",
         type=int,
         help="Retention period in days (default: from config)",
+    )
+    prune_parser.add_argument(
+        "--retention-max-bytes",
+        type=int,
+        default=None,
+        metavar="BYTES",
+        help="Prune oldest runs until DB size is at or below BYTES (optional; from config if set)",
     )
     prune_parser.add_argument(
         "--vacuum",

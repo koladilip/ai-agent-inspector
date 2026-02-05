@@ -111,18 +111,30 @@ class APIServer:
             """
             Health check endpoint.
 
-            Returns:
-                Status of the API server and database.
+            Returns status of the API server and database. When the default
+            Trace has an initialized event queue, includes optional "queue"
+            (worker_alive, queue_size) for readiness checks.
             """
             try:
-                # Check database connection
                 stats = self._database.get_stats()
                 is_healthy = bool(stats)
-
-                return {
+                payload = {
                     "status": "healthy" if is_healthy else "unhealthy",
                     "timestamp": int(time.time() * 1000),
                 }
+                try:
+                    from ..core.trace import get_trace
+                    trace = get_trace()
+                    if getattr(trace, "_queue_manager", None) is not None:
+                        queue = trace._queue_manager.get_queue()
+                        if queue is not None:
+                            payload["queue"] = {
+                                "worker_alive": queue.is_alive(),
+                                "queue_size": queue.get_stats().get("queue_size", 0),
+                            }
+                except Exception:
+                    pass
+                return payload
             except Exception as e:
                 logger.error(f"Health check failed: {e}")
                 raise HTTPException(
@@ -135,18 +147,27 @@ class APIServer:
             x_api_key: Optional[str] = Header(None),
         ):
             """
-            Get database statistics.
+            Get database statistics and optional queue statistics.
 
-            Args:
-                x_api_key: API key for authentication (if required).
-
-            Returns:
-                Database statistics including run counts and storage size.
+            When the default Trace has an initialized event queue (e.g. after
+            at least one trace.run() in this process), response includes a
+            "queue" object: events_queued, events_dropped, events_processed,
+            queue_size, queue_maxsize. Use these for SDK observability and alerting.
             """
             self._check_auth(x_api_key)
 
             try:
                 stats = self._database.get_stats()
+                # Expose queue stats when default Trace has an initialized queue
+                try:
+                    from ..core.trace import get_trace
+                    trace = get_trace()
+                    if getattr(trace, "_queue_manager", None) is not None:
+                        queue = trace._queue_manager.get_queue()
+                        if queue is not None:
+                            stats["queue"] = queue.get_stats()
+                except Exception as e:
+                    logger.debug("Queue stats unavailable: %s", e)
                 return stats
             except Exception as e:
                 logger.error(f"Failed to get stats: {e}")

@@ -7,27 +7,42 @@
     <link rel="stylesheet" href="/ui/static/app.css">
 </head>
 <body>
-<button class="theme-toggle" id="themeToggle" type="button">Theme: Auto</button>
+    <header class="app-header">
+        <h1>Agent Inspector</h1>
+        <button class="theme-toggle" id="themeToggle" type="button">
+            <span>Theme</span>
+            <span id="themeLabel">Auto</span>
+        </button>
+    </header>
+
     <div class="container">
         <!-- Left Panel: Run List -->
         <div class="panel">
             <div class="panel-header">Runs</div>
-            <div class="filters">
-                <input type="text" class="search-input" id="searchInput" placeholder="Search runs...">
-                <select class="filter-select" id="statusFilter">
-                    <option value="">All Status</option>
-                    <option value="completed">Completed</option>
-                    <option value="running">Running</option>
-                    <option value="failed">Failed</option>
-                </select>
-                <select class="filter-select" id="eventTypeFilter">
-                    <option value="">All Events</option>
-                    <option value="llm_call">LLM Calls</option>
-                    <option value="tool_call">Tool Calls</option>
-                    <option value="error">Errors</option>
-                </select>
-            </div>
             <div class="panel-content">
+                <div class="filters">
+                    <input type="text" class="search-input" id="searchInput" placeholder="Search runs...">
+                    <div class="filter-row">
+                        <select class="filter-select" id="statusFilter">
+                            <option value="">All Status</option>
+                            <option value="completed">Completed</option>
+                            <option value="running">Running</option>
+                            <option value="failed">Failed</option>
+                        </select>
+                        <select class="filter-select" id="eventTypeFilter">
+                            <option value="">All Events</option>
+                            <option value="llm_call">LLM Calls</option>
+                            <option value="tool_call">Tool Calls</option>
+                            <option value="memory_read">Memory Access</option>
+                            <option value="error">Errors</option>
+                            <option value="agent_spawn">Agent Spawn</option>
+                            <option value="agent_join">Agent Join</option>
+                            <option value="agent_communication">Agent Communication</option>
+                            <option value="agent_handoff">Agent Handoff</option>
+                            <option value="task_assignment">Task Assignment</option>
+                        </select>
+                    </div>
+                </div>
                 <ul class="run-list" id="runList">
                     <li class="loading">Loading runs...</li>
                 </ul>
@@ -35,9 +50,9 @@
         </div>
 
         <!-- Center Panel: Timeline -->
-        <div class="panel">
-            <div class="panel-header">Timeline</div>
-            <div class="panel-content">
+         <div class="panel">
+             <div class="panel-header">Timeline</div>
+             <div class="panel-content">
                 <div class="timeline" id="timeline">
                     <div class="loading">Select a run to view timeline</div>
                 </div>
@@ -72,6 +87,7 @@
         const statusFilter = document.getElementById('statusFilter');
         const eventTypeFilter = document.getElementById('eventTypeFilter');
         const themeToggle = document.getElementById('themeToggle');
+        const themeLabel = document.getElementById('themeLabel');
 
         // Load runs on page load
         window.addEventListener('load', () => {
@@ -108,21 +124,39 @@
 
         function renderRuns(runsToRender) {
             if (runsToRender.length === 0) {
-                runList.innerHTML = '<li class="loading" style="padding: 40px;">No runs found</li>';
+                runList.innerHTML = '<li class="loading" style="padding: 40px; background: none;">No runs found</li>';
                 return;
             }
 
-            runList.innerHTML = runsToRender.map(run => `
-                <li class="run-item ${currentRunId === run.id ? 'active' : ''}"
+            runList.innerHTML = runsToRender.map(run => {
+                const statusIcon = getStatusIcon(run.status);
+                return `
+                <li class="run-card ${run.status} ${currentRunId === run.id ? 'active' : ''}"
                     data-run-id="${run.id}"
                     onclick="selectRun('${run.id}')">
-                    <div class="run-name">${escapeHtml(run.name || 'Unnamed Run')}</div>
+                    <div class="run-header">
+                        <div class="run-id">${escapeHtml(run.name || run.id || 'Unnamed Run')}</div>
+                        <span class="run-status-badge ${run.status}">
+                            ${statusIcon} ${run.status}
+                        </span>
+                    </div>
+                    <div class="run-description">${escapeHtml(run.description || `Run ${run.id} with ${run.event_count || 0} events`)}</div>
                     <div class="run-meta">
-                        ${formatTimestamp(run.started_at)}
-                        <span class="run-status ${run.status}">${run.status}</span>
+                        <span class="run-time">${formatTimeOnly(run.started_at)}</span>
+                        <span>${formatDateOnly(run.started_at)}</span>
                     </div>
                 </li>
-            `).join('');
+            `}).join('');
+        }
+
+        function getStatusIcon(status) {
+            const icons = {
+                'completed': '✓',
+                'running': '⟳',
+                'failed': '✕',
+                'pending': '○'
+            };
+            return icons[status] || '●';
         }
 
         function filterRuns() {
@@ -131,7 +165,9 @@
 
             const filtered = runs.filter(run => {
                 const matchesSearch = !searchTerm ||
-                    (run.name && run.name.toLowerCase().includes(searchTerm));
+                    (run.name && run.name.toLowerCase().includes(searchTerm)) ||
+                    (run.id && run.id.toLowerCase().includes(searchTerm)) ||
+                    (run.description && run.description.toLowerCase().includes(searchTerm));
                 const matchesStatus = !status || run.status === status;
                 return matchesSearch && matchesStatus;
             });
@@ -143,7 +179,7 @@
             currentRunId = runId;
 
             // Update UI
-            document.querySelectorAll('.run-item').forEach(item => {
+            document.querySelectorAll('.run-card').forEach(item => {
                 item.classList.remove('active');
                 if (item.dataset.runId === runId) {
                     item.classList.add('active');
@@ -151,7 +187,7 @@
             });
 
             // Clear detail view
-            detailView.innerHTML = '<div class="detail-empty">Loading...</div>';
+            detailView.innerHTML = '<div class="detail-empty">Select an event to view details</div>';
 
             // Load timeline
             await loadTimeline(runId);
@@ -161,7 +197,7 @@
             try {
                 timeline.innerHTML = '<div class="loading">Loading timeline...</div>';
 
-                const response = await fetch(`${API_BASE}/runs/${runId}/timeline`);
+                const response = await fetch(`${API_BASE}/runs/${runId}/timeline?include_data=true`);
                 const data = await response.json();
                 const events = data.events || [];
 
@@ -174,7 +210,7 @@
 
         function renderTimeline(events) {
             if (events.length === 0) {
-                timeline.innerHTML = '<div class="loading">No events in this run</div>';
+                timeline.innerHTML = '<div class="loading" style="background: none;">No events in this run</div>';
                 return;
             }
 
@@ -184,31 +220,110 @@
                 : events;
 
             if (filteredEvents.length === 0) {
-                timeline.innerHTML = '<div class="loading">No events match filter</div>';
+                timeline.innerHTML = '<div class="loading" style="background: none;">No events match filter</div>';
                 return;
             }
 
+            const eventClasses = {
+                'llm_call': 'llm',
+                'tool_call': 'tool',
+                'memory_read': 'memory',
+                'memory_write': 'memory',
+                'error': 'error',
+                'final_answer': 'final',
+                'run_start': 'llm',
+                // Multi-agent classes
+                'agent_spawn': 'agent',
+                'agent_join': 'agent',
+                'agent_leave': 'agent',
+                'agent_communication': 'communication',
+                'agent_handoff': 'handoff',
+                'task_assignment': 'task',
+                'task_completion': 'task'
+            };
+
             timeline.innerHTML = `
-                <div class="event-connector"></div>
-                ${filteredEvents.map(event => `
-                    <div class="timeline-event"
+                <div class="timeline-connector"></div>
+                ${filteredEvents.map(event => {
+                    const eventClass = eventClasses[event.type] || 'llm';
+                    const icon = getEventIcon(event.type);
+                    const badge = getEventTypeBadge(event.type);
+                    const time = formatTimeOnly(event.timestamp);
+                    return `
+                    <div class="timeline-event ${eventClass}"
                          onclick="showEventDetail('${event.id}')"
                          data-event-id="${event.id}">
-                        <div class="event-icon ${event.type}">
-                            ${getEventIcon(event.type)}
-                        </div>
-                        <div class="event-content">
-                            <div class="event-type">${formatEventType(event.type)}</div>
-                            <div class="event-timestamp">${formatTimestamp(event.timestamp)}</div>
-                            <div class="event-summary">${getEventSummary(event)}</div>
+                        <div class="timeline-event-time">${time}</div>
+                        <div class="timeline-event-card">
+                            <div class="event-icon-wrapper">${icon}</div>
+                            <div class="event-details">
+                                <div class="event-type-label">
+                                    ${formatEventType(event.type)}
+                                    <span class="event-type-badge">${badge}</span>
+                                </div>
+                                <div class="event-summary">${getEventSummary(event)}</div>
+                                ${getEventPreview(event)}
+                            </div>
                         </div>
                     </div>
-                `).join('')}
+                `}).join('')}
             `;
+        }
+
+        function getEventTypeBadge(type) {
+            const badges = {
+                'llm_call': 'LLM',
+                'tool_call': 'TOOL',
+                'memory_read': 'MEMORY',
+                'memory_write': 'MEMORY',
+                'error': 'ERROR',
+                'final_answer': 'FINAL',
+                // Multi-agent badges
+                'agent_spawn': 'AGENT',
+                'agent_join': 'JOIN',
+                'agent_leave': 'LEAVE',
+                'agent_communication': 'MSG',
+                'agent_handoff': 'HANDOFF',
+                'task_assignment': 'TASK',
+                'task_completion': 'DONE'
+            };
+            return badges[type] || type.toUpperCase();
+        }
+
+        function getEventPreview(event) {
+            const summary = getEventSummary(event);
+            let preview = '';
+            if (event.type === 'llm_call' && event.prompt) {
+                preview = event.prompt.substring(0, 60) + (event.prompt.length > 60 ? '...' : '');
+            } else if (event.type === 'tool_call' && event.tool_name) {
+                preview = `${event.tool_name}(${JSON.stringify(event.tool_args || {}).substring(0, 50)})`;
+            } else if ((event.type === 'memory_read' || event.type === 'memory_write') && event.memory_key) {
+                preview = `Key: ${event.memory_key}`;
+            } else if (event.type === 'agent_communication' && event.message_content) {
+                preview = event.message_content.substring(0, 80) + (event.message_content.length > 80 ? '...' : '');
+            } else if (event.type === 'agent_handoff' && event.handoff_reason) {
+                preview = `Reason: ${event.handoff_reason}`;
+            } else if (event.type === 'task_assignment' || event.type === 'task_completion') {
+                const taskName = event.task_name || event.data?.task_name;
+                if (taskName && taskName.length > 45) {
+                    preview = taskName.length > 120 ? taskName.substring(0, 120) + '…' : taskName;
+                }
+            }
+            if (!preview || preview === summary) return '';
+            return `<div class="event-data-preview">${escapeHtml(preview)}</div>`;
         }
 
         async function showEventDetail(eventId) {
             currentEventId = eventId;
+
+            // Highlight selected event
+            document.querySelectorAll('.timeline-event').forEach(el => {
+                el.style.opacity = '0.6';
+            });
+            const selectedEvent = document.querySelector(`[data-event-id="${eventId}"]`);
+            if (selectedEvent) {
+                selectedEvent.style.opacity = '1';
+            }
 
             try {
                 const response = await fetch(`${API_BASE}/runs/${currentRunId}/steps/${eventId}/data`);
@@ -227,122 +342,243 @@
                 return;
             }
 
-            const sections = [];
-            const richBlocks = [];
+            let html = '';
 
-            // Basic info
-            sections.push({
-                label: 'Event ID',
-                value: event.event_id || 'N/A'
-            });
+            // Basic Info Section
+            html += `
+                <div class="detail-section">
+                    <div class="detail-section-header">
+                        <span class="detail-section-title">Event Information</span>
+                    </div>
+                    <div class="detail-grid">
+                        <div class="detail-label">Event ID</div>
+                        <div class="detail-value">${event.event_id || 'N/A'}</div>
+                        
+                        <div class="detail-label">Type</div>
+                        <div class="detail-value">${formatEventType(event.type)}</div>
+                        
+                        <div class="detail-label">Timestamp</div>
+                        <div class="detail-value">${formatTimestamp(event.timestamp_ms || event.timestamp)}</div>
+                        
+                        <div class="detail-label">Status</div>
+                        <div class="detail-value">${event.status || 'N/A'}</div>
+                        
+                        ${event.duration_ms ? `
+                        <div class="detail-label">Duration</div>
+                        <div class="detail-value">${event.duration_ms}ms</div>
+                        ` : ''}
+                    </div>
+                </div>
+            `;
 
-            sections.push({
-                label: 'Type',
-                value: formatEventType(event.type)
-            });
-
-            sections.push({
-                label: 'Timestamp',
-                value: formatTimestamp(event.timestamp_ms)
-            });
-
-            sections.push({
-                label: 'Status',
-                value: event.status || 'N/A'
-            });
-
-            if (event.duration_ms !== undefined) {
-                sections.push({
-                    label: 'Duration',
-                    value: `${event.duration_ms}ms`
-                });
-            }
-
-            // Type-specific details
+            // Type-specific sections
             if (event.type === 'llm_call') {
                 if (event.model) {
-                    sections.push({ label: 'Model', value: event.model });
+                    html += createDetailSection('Model', event.model);
                 }
                 if (event.prompt) {
                     const parsed = parseMaybeJson(event.prompt);
                     if (parsed && Array.isArray(parsed)) {
-                        richBlocks.push({
-                            label: 'Prompt',
-                            html: renderChatMessages(parsed)
-                        });
+                        html += createChatSection('Prompt', parsed);
                     } else {
-                        sections.push({ label: 'Prompt', value: event.prompt });
+                        html += createCodeSection('Prompt', event.prompt);
                     }
                 }
                 if (event.response) {
-                    sections.push({ label: 'Response', value: event.response });
+                    html += createCodeSection('Response', event.response);
                 }
-                if (event.total_tokens) {
-                    sections.push({ label: 'Tokens', value: event.total_tokens.toString() });
+                if (event.total_tokens !== undefined) {
+                    html += createDetailSection('Tokens', `
+                        <div style="display: flex; gap: 16px; font-size: 12px;">
+                            <span>Input: <strong>${event.input_tokens || 0}</strong></span>
+                            <span>Output: <strong>${event.output_tokens || 0}</strong></span>
+                            <span>Total: <strong>${event.total_tokens}</strong></span>
+                        </div>
+                    `, true);
                 }
             } else if (event.type === 'tool_call') {
                 if (event.tool_name) {
-                    sections.push({ label: 'Tool', value: event.tool_name });
+                    html += createDetailSection('Tool Name', event.tool_name);
                 }
                 if (event.tool_args) {
-                    sections.push({
-                        label: 'Arguments',
-                        value: JSON.stringify(event.tool_args, null, 2)
-                    });
+                    html += createCodeSection('Arguments', syntaxHighlightJson(event.tool_args));
                 }
-                if (event.tool_result) {
-                    sections.push({
-                        label: 'Result',
-                        value: JSON.stringify(event.tool_result, null, 2)
-                    });
+                if (event.tool_result !== undefined) {
+                    html += createCodeSection('Result', syntaxHighlightJson(event.tool_result));
                 }
             } else if (event.type === 'memory_read' || event.type === 'memory_write') {
                 if (event.memory_key) {
-                    sections.push({ label: 'Key', value: event.memory_key });
+                    html += createDetailSection('Memory Key', event.memory_key);
                 }
-                if (event.memory_value) {
-                    sections.push({
-                        label: 'Value',
-                        value: JSON.stringify(event.memory_value, null, 2)
-                    });
+                if (event.memory_value !== undefined) {
+                    html += createCodeSection('Value', syntaxHighlightJson(event.memory_value));
                 }
             } else if (event.type === 'error') {
                 if (event.error_type) {
-                    sections.push({ label: 'Error Type', value: event.error_type });
+                    html += createDetailSection('Error Type', event.error_type);
                 }
                 if (event.error_message) {
-                    sections.push({ label: 'Message', value: event.error_message });
+                    html += createCodeSection('Message', event.error_message);
+                }
+                if (event.stack_trace) {
+                    html += createCodeSection('Stack Trace', event.stack_trace);
                 }
             } else if (event.type === 'final_answer') {
                 if (event.answer) {
-                    sections.push({ label: 'Answer', value: event.answer });
+                    html += createCodeSection('Answer', event.answer);
+                }
+            } else if (event.type === 'agent_spawn') {
+                if (event.agent_name) {
+                    html += createDetailSection('Agent Name', event.agent_name);
+                }
+                if (event.agent_id) {
+                    html += createDetailSection('Agent ID', event.agent_id);
+                }
+                if (event.agent_role) {
+                    html += createDetailSection('Role', event.agent_role);
+                }
+                if (event.parent_run_id) {
+                    html += createDetailSection('Parent Run', event.parent_run_id);
+                }
+                if (event.agent_config && Object.keys(event.agent_config).length > 0) {
+                    html += createCodeSection('Configuration', syntaxHighlightJson(event.agent_config));
+                }
+            } else if (event.type === 'agent_join') {
+                if (event.agent_name) {
+                    html += createDetailSection('Agent Name', event.agent_name);
+                }
+                if (event.group_name) {
+                    html += createDetailSection('Group', event.group_name);
+                }
+                if (event.group_id) {
+                    html += createDetailSection('Group ID', event.group_id);
+                }
+            } else if (event.type === 'agent_leave') {
+                if (event.agent_name) {
+                    html += createDetailSection('Agent Name', event.agent_name);
+                }
+                if (event.reason) {
+                    html += createDetailSection('Reason', event.reason);
+                }
+            } else if (event.type === 'agent_communication') {
+                if (event.from_agent_name) {
+                    html += createDetailSection('From', event.from_agent_name);
+                }
+                if (event.to_agent_name) {
+                    html += createDetailSection('To', event.to_agent_name);
+                }
+                if (event.message_type) {
+                    html += createDetailSection('Type', event.message_type);
+                }
+                if (event.message_content) {
+                    html += createCodeSection('Message', event.message_content);
+                }
+                if (event.group_id) {
+                    html += createDetailSection('Group ID', event.group_id);
+                }
+            } else if (event.type === 'agent_handoff') {
+                if (event.from_agent_name) {
+                    html += createDetailSection('From Agent', event.from_agent_name);
+                }
+                if (event.to_agent_name) {
+                    html += createDetailSection('To Agent', event.to_agent_name);
+                }
+                if (event.handoff_reason) {
+                    html += createDetailSection('Reason', event.handoff_reason);
+                }
+                if (event.context_summary) {
+                    html += createDetailSection('Context', event.context_summary);
+                }
+            } else if (event.type === 'task_assignment') {
+                if (event.task_name) {
+                    html += createDetailSection('Task', event.task_name);
+                }
+                if (event.assigned_to_agent_name) {
+                    html += createDetailSection('Assigned To', event.assigned_to_agent_name);
+                }
+                if (event.priority) {
+                    html += createDetailSection('Priority', event.priority);
+                }
+                if (event.task_data && Object.keys(event.task_data).length > 0) {
+                    html += createCodeSection('Task Data', syntaxHighlightJson(event.task_data));
+                }
+            } else if (event.type === 'task_completion') {
+                if (event.task_name) {
+                    html += createDetailSection('Task', event.task_name);
+                }
+                if (event.completed_by_agent_name) {
+                    html += createDetailSection('Completed By', event.completed_by_agent_name);
+                }
+                if (event.success !== undefined) {
+                    html += createDetailSection('Success', event.success ? 'Yes' : 'No');
+                }
+                if (event.result !== undefined) {
+                    html += createCodeSection('Result', syntaxHighlightJson(event.result));
+                }
+                if (event.completion_time_ms) {
+                    html += createDetailSection('Time', `${event.completion_time_ms}ms`);
                 }
             }
 
-            // Metadata
+            // Metadata section
             if (event.metadata && Object.keys(event.metadata).length > 0) {
-                sections.push({
-                    label: 'Metadata',
-                    value: JSON.stringify(event.metadata, null, 2)
-                });
+                html += createCodeSection('Metadata', syntaxHighlightJson(event.metadata));
             }
 
-            // Render sections
-            const sectionHtml = sections.map(section => `
+            detailView.innerHTML = html;
+        }
+
+        function createDetailSection(label, value, isHtml = false) {
+            return `
                 <div class="detail-section">
-                    <div class="detail-label">${escapeHtml(section.label)}</div>
-                    <div class="detail-value">${escapeHtml(section.value)}</div>
+                    <div class="detail-section-header">
+                        <span class="detail-section-title">${label}</span>
+                    </div>
+                    <div class="detail-value ${isHtml ? '' : ''}">${isHtml ? value : escapeHtml(value)}</div>
+                </div>
+            `;
+        }
+
+        function createCodeSection(label, content) {
+            return `
+                <div class="detail-section">
+                    <div class="detail-section-header">
+                        <span class="detail-section-title">${label}</span>
+                    </div>
+                    <div class="detail-value code">${content}</div>
+                </div>
+            `;
+        }
+
+        function createChatSection(label, messages) {
+            const messagesHtml = messages.map(msg => `
+                <div class="chat-message ${escapeHtml(msg.role || 'unknown')}">
+                    <div class="chat-role">${escapeHtml(msg.role || 'unknown')}</div>
+                    <div class="chat-content">${escapeHtml(msg.content || '')}</div>
                 </div>
             `).join('');
 
-            const richHtml = richBlocks.map(block => `
+            return `
                 <div class="detail-section">
-                    <div class="detail-label">${escapeHtml(block.label)}</div>
-                    <div class="detail-chat">${block.html}</div>
+                    <div class="detail-section-header">
+                        <span class="detail-section-title">${label}</span>
+                    </div>
+                    <div class="chat-container">${messagesHtml}</div>
                 </div>
-            `).join('');
+            `;
+        }
 
-            detailView.innerHTML = richHtml + sectionHtml;
+        function syntaxHighlightJson(obj) {
+            const json = JSON.stringify(obj, null, 2);
+            return json
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/(".*?"):/g, '<span class="json-key">$1</span>:')
+                .replace(/: (".*?")/g, ': <span class="json-string">$1</span>')
+                .replace(/: (\d+)/g, ': <span class="json-number">$1</span>')
+                .replace(/: (true|false)/g, ': <span class="json-boolean">$1</span>')
+                .replace(/: (null)/g, ': <span class="json-null">$1</span>');
         }
 
         function getEventIcon(type) {
@@ -353,43 +589,135 @@
                 'memory_write': '✍️',
                 'error': '❌',
                 'final_answer': '✅',
-                'run_start': '▶️'
+                'run_start': '▶️',
+                // Multi-agent icons
+                'agent_spawn': '👤',
+                'agent_join': '📥',
+                'agent_leave': '📤',
+                'agent_communication': '💬',
+                'agent_handoff': '🔀',
+                'task_assignment': '📝',
+                'task_completion': '✓'
             };
             return icons[type] || '📌';
         }
 
         function formatEventType(type) {
-            return type.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+            const labels = {
+                'llm_call': 'LLM Call',
+                'tool_call': 'Tool Call',
+                'memory_read': 'Memory Read',
+                'memory_write': 'Memory Write',
+                'error': 'Error',
+                'final_answer': 'Final Answer',
+                'run_start': 'Run Started',
+                // Multi-agent labels
+                'agent_spawn': 'Agent Spawned',
+                'agent_join': 'Agent Joined',
+                'agent_leave': 'Agent Left',
+                'agent_communication': 'Agent Message',
+                'agent_handoff': 'Agent Handoff',
+                'task_assignment': 'Task Assigned',
+                'task_completion': 'Task Completed'
+            };
+            return labels[type] || type.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
         }
 
         function getEventSummary(event) {
+            let role = '';
+            let agentName = '';
+            let agentRole = '';
+            let reason = '';
+            
             switch (event.type) {
                 case 'llm_call':
-                    return event.model ? `Model: ${event.model}` : 'LLM Call';
+                    return event.model ? `Model: ${event.model}` : 'LLM processing';
                 case 'tool_call':
-                    return event.tool_name ? `Tool: ${event.tool_name}` : 'Tool Call';
+                    return event.tool_name ? `Tool: ${event.tool_name}` : 'Tool execution';
                 case 'memory_read':
-                    return event.memory_key ? `Read: ${event.memory_key}` : 'Memory Read';
+                    return event.memory_key ? `Reading: ${event.memory_key}` : 'Memory access';
                 case 'memory_write':
-                    return event.memory_key ? `Write: ${event.memory_key}` : 'Memory Write';
+                    return event.memory_key ? `Writing: ${event.memory_key}` : 'Memory update';
                 case 'error':
-                    return event.error_message || 'Error occurred';
+                    return event.error_message || 'An error occurred';
                 case 'final_answer':
-                    return event.answer ? event.answer.substring(0, 50) + '...' : 'Final answer';
+                    return 'Final response generated';
+                // Multi-agent events - check both direct fields and data field
+                case 'agent_spawn':
+                    agentName = event.agent_name || (event.data?.agent_name || '');
+                    agentRole = event.agent_role || (event.data?.agent_role || '');
+                    role = agentRole ? `(${agentRole})` : '';
+                    return agentName ? `${agentName}${role} - Spawned` : (event.agent_id || event.name || 'Agent spawned');
+                case 'agent_join':
+                    agentName = event.agent_name || (event.data?.agent_name || '');
+                    agentRole = event.agent_role || (event.data?.agent_role || '');
+                    role = agentRole ? `(${agentRole})` : '';
+                    return agentName ? `${agentName}${role} - Joined` : (event.agent_id || event.name || 'Agent joined');
+                case 'agent_leave':
+                    agentName = event.agent_name || (event.data?.agent_name || '');
+                    reason = event.data?.reason || event.reason ? `(${event.data?.reason || event.reason})` : '';
+                    return agentName ? `${agentName} left${reason}` : (event.agent_id || event.name || 'Agent left');
+                case 'agent_communication': {
+                    const fromLabel = event.from_agent_name || event.from_agent_id || event.data?.from_agent_name || event.data?.from_agent_id;
+                    const toLabel = event.to_agent_name || event.to_agent_id || event.data?.to_agent_name || event.data?.to_agent_id;
+                    if (fromLabel) return toLabel ? `${fromLabel} → ${toLabel}` : `${fromLabel} → All`;
+                    return event.name || 'Agent message';
+                }
+                case 'agent_handoff': {
+                    const fromLabel = event.from_agent_name || event.from_agent_id || event.data?.from_agent_name || event.data?.from_agent_id;
+                    const toLabel = event.to_agent_name || event.to_agent_id || event.data?.to_agent_name || event.data?.to_agent_id;
+                    return (fromLabel && toLabel) ? `${fromLabel} → ${toLabel}` : (event.name || 'Agent handoff');
+                }
+                case 'task_assignment': {
+                    const taskLabel = event.task_name || event.task_id || event.data?.task_name || event.data?.task_id;
+                    const assigneeLabel = event.assigned_to_agent_name || event.assigned_to_agent_id || event.data?.assigned_to_agent_name || event.data?.assigned_to_agent_id;
+                    if (!taskLabel || !assigneeLabel) return event.name || 'Task assigned';
+                    const shortTask = taskLabel.length > 45 ? taskLabel.substring(0, 45) + '…' : taskLabel;
+                    return `${shortTask} → ${assigneeLabel}`;
+                }
+                case 'task_completion': {
+                    const taskLabel = event.task_name || event.task_id || event.data?.task_name || event.data?.task_id;
+                    if (!taskLabel) return event.name || 'Task completed';
+                    const shortTask = taskLabel.length > 45 ? taskLabel.substring(0, 45) + '…' : taskLabel;
+                    return `${shortTask} completed`;
+                }
                 default:
                     return event.name || event.type;
             }
         }
 
         function formatTimestamp(ms) {
+            if (!ms) return 'N/A';
             const date = new Date(ms);
             return date.toLocaleString();
         }
 
+        function formatTimeOnly(ms) {
+            if (!ms) return '';
+            const date = new Date(ms);
+            return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+        }
+
+        function formatDateOnly(ms) {
+            if (!ms) return '';
+            const date = new Date(ms);
+            return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+        }
+
         function escapeHtml(text) {
+            if (text === null || text === undefined) return '';
             const div = document.createElement('div');
             div.textContent = text;
             return div.innerHTML;
+        }
+
+        function parseMaybeJson(text) {
+            if (!text) return null;
+            try {
+                return JSON.parse(text);
+            } catch (e) {
+                return null;
+            }
         }
 
         function initTheme() {
@@ -413,27 +741,7 @@
                 root.classList.add('theme-dark');
             }
             localStorage.setItem('agent_inspector_theme', theme);
-            const label = theme === 'auto'
-                ? 'Theme: Auto'
-                : `Theme: ${theme[0].toUpperCase()}${theme.slice(1)}`;
-            themeToggle.textContent = label;
-        }
-
-        function parseMaybeJson(text) {
-            try {
-                return JSON.parse(text);
-            } catch (e) {
-                return null;
-            }
-        }
-
-        function renderChatMessages(messages) {
-            return messages.map(msg => `
-                <div class="chat-row ${escapeHtml(msg.role || 'unknown')}">
-                    <div class="chat-role">${escapeHtml(msg.role || 'unknown')}</div>
-                    <div class="chat-content">${escapeHtml(msg.content || '')}</div>
-                </div>
-            `).join('');
+            themeLabel.textContent = theme === 'auto' ? 'Auto' : theme.charAt(0).toUpperCase() + theme.slice(1);
         }
     </script>
     <script src="/ui/static/app.js" defer></script>
